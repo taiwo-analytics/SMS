@@ -30,12 +30,16 @@ Follow these steps to connect your Supabase project:
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
+DEV_ADMIN_SECRET=change_me_for_dev
 ```
 
 **Example:**
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://abcdefghijklmnop.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFiY2RlZmdoaWprbG1ub3AiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTYzODk2NzI4MCwiZXhwIjoxOTU0NTQzMjgwfQ.example
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
+DEV_ADMIN_SECRET=change_me_for_dev
 ```
 
 ## Step 3: Set Up Your Database Schema

@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
 
 export const runtime = 'nodejs'
 
@@ -9,10 +8,10 @@ export const runtime = 'nodejs'
  */
 export async function GET() {
   try {
-    const supabase = createServerComponentClient({ cookies })
+    const supabase = await createServerSupabaseClient()
 
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -42,17 +41,17 @@ export async function GET() {
  */
 export async function POST(req: Request) {
   try {
-    const supabase = createServerComponentClient({ cookies })
+    const supabase = await createServerSupabaseClient()
 
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
-      .eq('id', session.user.id)
+      .eq('id', user.id)
       .single()
 
     if (profile?.role !== 'admin') {

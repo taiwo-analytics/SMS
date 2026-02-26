@@ -1,4 +1,4 @@
-import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs'
+import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
@@ -9,59 +9,89 @@ const ROLE_ROUTE_MAP: Record<string, string> = {
   '/parent': 'parent',
 }
 
+const ROLE_HOME_MAP: Record<string, string> = {
+  admin: '/admin',
+  teacher: '/teacher/classes',
+  student: '/student/classes',
+  parent: '/parent/children',
+}
+
 export async function middleware(req: NextRequest) {
-  const res = NextResponse.next()
-  const supabase = createMiddlewareClient({ req, res })
+  let supabaseResponse = NextResponse.next({ request: req })
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  const { pathname } = req.nextUrl
-
-  // Redirect authenticated users away from auth pages
-  if (pathname.startsWith('/auth')) {
-    if (session) {
-      return NextResponse.redirect(new URL('/', req.url))
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return req.cookies.getAll()
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) =>
+            req.cookies.set(name, value)
+          )
+          supabaseResponse = NextResponse.next({ request: req })
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options)
+          )
+        },
+      },
     }
-    return res
-  }
-
-  // Check if this is a protected route
-  const matchedPrefix = Object.keys(ROLE_ROUTE_MAP).find((prefix) =>
-    pathname.startsWith(prefix)
   )
 
-  if (!matchedPrefix) {
-    return res
+  const { data: { user } } = await supabase.auth.getUser()
+  const { pathname } = req.nextUrl
+
+  // Helper to redirect while preserving Supabase session cookies
+  const redirectWithCookies = (url: URL) => {
+    const redirectResponse = NextResponse.redirect(url)
+    supabaseResponse.cookies.getAll().forEach(cookie => {
+      redirectResponse.cookies.set(cookie.name, cookie.value)
+    })
+    return redirectResponse
   }
 
-  // Must be authenticated for any protected route
-  if (!session) {
+  // Public sign-up is disabled; account creation is admin-only
+  if (pathname === '/auth/signup') {
+    const url = req.nextUrl.clone()
+    url.pathname = '/auth/login'
+    return redirectWithCookies(url)
+  }
+
+  // Check if the route requires a specific role
+  const matchedPrefix = Object.keys(ROLE_ROUTE_MAP).find(prefix => pathname.startsWith(prefix))
+  if (!matchedPrefix) {
+    return supabaseResponse
+  }
+
+  // Not logged in — redirect to login
+  if (!user) {
     const loginUrl = new URL('/auth/login', req.url)
     loginUrl.searchParams.set('redirectTo', pathname)
-    return NextResponse.redirect(loginUrl)
+    return redirectWithCookies(loginUrl)
   }
 
-  // Check role from the profiles table
-  const { data: profile } = await supabase
+  // Check role from the profiles table.
+  // If profile lookup fails (e.g., RLS policy issue), don't trap user on "/".
+  const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('role')
-    .eq('id', session.user.id)
-    .single()
+    .eq('id', user.id)
+    .maybeSingle()
 
   const userRole = profile?.role
+  if (profileError || !userRole) {
+    return supabaseResponse
+  }
   const requiredRole = ROLE_ROUTE_MAP[matchedPrefix]
-
   if (userRole !== requiredRole) {
-    // Redirect to home if user doesn't have the right role
-    return NextResponse.redirect(new URL('/', req.url))
+    const url = req.nextUrl.clone()
+    url.pathname = ROLE_HOME_MAP[userRole || ''] || '/'
+    return redirectWithCookies(url)
   }
 
-  // Also block API routes under /api/admin for non-admins
-  // (API routes get their own in-handler check too, as defense-in-depth)
-
-  return res
+  return supabaseResponse
 }
 
 export const config = {

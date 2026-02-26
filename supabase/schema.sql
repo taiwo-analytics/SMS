@@ -71,6 +71,21 @@ ALTER TABLE teachers ADD COLUMN IF NOT EXISTS dob DATE;
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS address TEXT;
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS status TEXT;
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS admission TEXT;
+-- Additional teacher fields
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS staff_id TEXT;
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS marital_status TEXT;
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS next_of_kin TEXT;
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS next_of_kin_phone TEXT;
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS course_of_study TEXT;
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS institution_name TEXT;
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS years_of_experience INTEGER;
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS subjects_taught TEXT[]; -- store subject IDs or names
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS degrees TEXT[]; -- e.g., B.Sc., M.Ed.
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS certifications TEXT[]; -- certification titles
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS workshops TEXT[]; -- workshops/trainings attended
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS cv_url TEXT; -- link to uploaded CV
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS certification_files TEXT[]; -- links to certification files
 
 -- Add extra student fields
 ALTER TABLE students ADD COLUMN IF NOT EXISTS phone TEXT;
@@ -79,7 +94,12 @@ ALTER TABLE students ADD COLUMN IF NOT EXISTS dob DATE;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS address TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS status TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS admission TEXT;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS admission_date DATE;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS guardian_name TEXT;
+-- Additional student fields
+ALTER TABLE students ADD COLUMN IF NOT EXISTS nin TEXT;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS guardian_phone TEXT;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS guardian_occupation TEXT;
 
 -- Create storage bucket for student photos (run this in Supabase Storage)
 -- Note: This needs to be done manually in Supabase Dashboard > Storage
@@ -91,6 +111,7 @@ CREATE TABLE IF NOT EXISTS class_enrollments (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   class_id UUID REFERENCES classes(id) ON DELETE CASCADE NOT NULL,
   student_id UUID REFERENCES students(id) ON DELETE CASCADE NOT NULL,
+  department TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   UNIQUE(class_id, student_id)
 );
@@ -118,11 +139,16 @@ ALTER TABLE students ENABLE ROW LEVEL SECURITY;
 ALTER TABLE parents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE class_enrollments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE class_enrollments ADD COLUMN IF NOT EXISTS department TEXT;
 
 -- Profiles policies
 CREATE POLICY "Users can view their own profile"
   ON profiles FOR SELECT
   USING (auth.uid() = id);
+
+CREATE POLICY "Admins can view all profiles"
+  ON profiles FOR SELECT
+  USING ((auth.jwt() ->> 'role') = 'admin');
 
 CREATE POLICY "Users can update their own profile"
   ON profiles FOR UPDATE
@@ -233,6 +259,21 @@ CREATE POLICY "Admins can view all classes"
     )
   );
 
+CREATE POLICY "Admins can manage classes"
+  ON classes FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  );
+
 -- Class enrollments policies
 CREATE POLICY "Students can view their own enrollments"
   ON class_enrollments FOR SELECT
@@ -286,6 +327,38 @@ CREATE TABLE IF NOT EXISTS events (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
+-- Canonical event time columns (for professional scheduling semantics)
+ALTER TABLE events ADD COLUMN IF NOT EXISTS start_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS end_at   TIMESTAMP WITH TIME ZONE;
+
+-- Backfill start_at/end_at from legacy columns, if needed
+UPDATE events
+SET
+  start_at = COALESCE(start_at, event_date),
+  end_at = COALESCE(
+    end_at,
+    CASE
+      WHEN event_time IS NULL THEN date_trunc('day', COALESCE(start_at, event_date)) + INTERVAL '23 hours 59 minutes 59 seconds'
+      ELSE COALESCE(start_at, event_date) + INTERVAL '1 hour'
+    END
+  )
+WHERE start_at IS NULL OR end_at IS NULL;
+
+-- Ensure chronological consistency
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints 
+    WHERE table_name = 'events' AND constraint_name = 'events_end_after_start'
+  ) THEN
+    ALTER TABLE events ADD CONSTRAINT events_end_after_start CHECK (end_at IS NULL OR start_at IS NULL OR end_at > start_at);
+  END IF;
+END $$;
+
+-- Helpful indexes for querying upcoming/ongoing events
+CREATE INDEX IF NOT EXISTS idx_events_start_at ON events(start_at);
+CREATE INDEX IF NOT EXISTS idx_events_end_at   ON events(end_at);
+
 -- Enable Row Level Security for events
 ALTER TABLE events ENABLE ROW LEVEL SECURITY;
 
@@ -314,11 +387,22 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
+-- Professional messaging flags
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT FALSE;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMP WITH TIME ZONE;
+CREATE INDEX IF NOT EXISTS idx_messages_is_read ON messages(is_read);
+CREATE INDEX IF NOT EXISTS idx_messages_recipient_role ON messages(recipient_role);
+
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Everyone can view messages"
+CREATE POLICY "Admins can view messages"
   ON messages FOR SELECT
-  USING (true);
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  );
 
 CREATE POLICY "Admins can manage messages"
   ON messages FOR ALL
@@ -326,6 +410,53 @@ CREATE POLICY "Admins can manage messages"
     EXISTS (
       SELECT 1 FROM profiles
       WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  );
+
+-- Teachers can read messages addressed to them or to all
+CREATE POLICY "Teachers can view messages"
+  ON messages FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'teacher'
+    )
+    AND (
+      recipient_role IN ('teacher','all') OR recipient_id = auth.uid()
+    )
+  );
+
+-- Teachers can mark their messages as read
+CREATE POLICY "Teachers can update read flags on own messages"
+  ON messages FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'teacher'
+    )
+    AND (
+      recipient_role IN ('teacher','all') OR recipient_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'teacher'
+    )
+    AND (
+      recipient_role IN ('teacher','all') OR recipient_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Teachers can create messages to admin or all"
+  ON messages FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'teacher'
+    )
+    AND (
+      recipient_role IN ('admin','all')
     )
   );
 
@@ -385,11 +516,14 @@ CREATE TABLE IF NOT EXISTS payments (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   student_id UUID REFERENCES students(id) ON DELETE SET NULL,
   amount NUMERIC(12,2) NOT NULL,
+  description TEXT,
   type TEXT,
   status TEXT DEFAULT 'pending', -- pending | completed | failed
   metadata JSONB,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
+
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS description TEXT;
 
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 
@@ -411,7 +545,7 @@ CREATE TABLE IF NOT EXISTS grades (
   assignment_name TEXT NOT NULL,
   score NUMERIC(7,2) NOT NULL,
   max_score NUMERIC(7,2) NOT NULL DEFAULT 100,
-  term_id UUID REFERENCES academic_terms(id) ON DELETE SET NULL,
+  term_id UUID,
   notes TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
@@ -667,3 +801,184 @@ CREATE POLICY "Admins can manage settings"
       WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
     )
   );
+
+-- ============================================================
+-- ACADEMIC SESSIONS & TERMS
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS academic_sessions (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  name TEXT NOT NULL,
+  start_date DATE,
+  end_date DATE,
+  is_active BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE academic_sessions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Everyone can view academic sessions"
+  ON academic_sessions FOR SELECT
+  USING (true);
+
+CREATE POLICY "Admins can manage academic sessions"
+  ON academic_sessions FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  );
+
+CREATE TABLE IF NOT EXISTS academic_terms (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  session_id UUID REFERENCES academic_sessions(id) ON DELETE CASCADE NOT NULL,
+  name TEXT NOT NULL,
+  start_date DATE,
+  end_date DATE,
+  is_active BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE academic_terms ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Everyone can view academic terms"
+  ON academic_terms FOR SELECT
+  USING (true);
+
+CREATE POLICY "Admins can manage academic terms"
+  ON academic_terms FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  );
+
+-- Add FK for grades.term_id after academic_terms exists
+DO $$
+BEGIN
+  ALTER TABLE grades
+    ADD CONSTRAINT grades_term_id_fkey FOREIGN KEY (term_id) REFERENCES academic_terms(id) ON DELETE SET NULL;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+-- ============================================================
+-- SUBJECTS & CLASS-SUBJECT-TEACHER ASSIGNMENTS
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS subjects (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE subjects ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Everyone can view subjects"
+  ON subjects FOR SELECT
+  USING (true);
+
+CREATE POLICY "Admins can manage subjects"
+  ON subjects FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  );
+
+CREATE TABLE IF NOT EXISTS class_subject_teachers (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  class_id UUID REFERENCES classes(id) ON DELETE CASCADE NOT NULL,
+  subject_id UUID REFERENCES subjects(id) ON DELETE CASCADE NOT NULL,
+  teacher_id UUID REFERENCES teachers(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  UNIQUE(class_id, subject_id)
+);
+
+ALTER TABLE class_subject_teachers ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Everyone can view class subject teachers"
+  ON class_subject_teachers FOR SELECT
+  USING (true);
+
+CREATE POLICY "Admins can manage class subject teachers"
+  ON class_subject_teachers FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  );
+
+-- ============================================================
+-- TIMETABLE
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS timetables (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  class_id UUID REFERENCES classes(id) ON DELETE CASCADE NOT NULL,
+  subject TEXT,
+  teacher_id UUID REFERENCES teachers(id) ON DELETE SET NULL,
+  day_of_week TEXT NOT NULL CHECK (day_of_week IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday')),
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  room TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE timetables ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Everyone can view timetables"
+  ON timetables FOR SELECT
+  USING (true);
+
+CREATE POLICY "Admins can manage timetables"
+  ON timetables FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  );
+
+-- ============================================================
+-- ASSESSMENTS TIMETABLE (CA1 / CA2 / Exams)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS assessment_timetables (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  class_id UUID REFERENCES classes(id) ON DELETE CASCADE NOT NULL,
+  subject TEXT,
+  assessment_type TEXT NOT NULL CHECK (assessment_type IN ('CA1','CA2','Exam')),
+  day_of_week TEXT NOT NULL CHECK (day_of_week IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday')),
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE assessment_timetables ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Everyone can view assessment timetables"
+  ON assessment_timetables FOR SELECT
+  USING (true);
+
+CREATE POLICY "Admins can manage assessment timetables"
+  ON assessment_timetables FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  );
+
+-- ============================================================
+-- MESSAGES ENHANCEMENTS
+-- ============================================================
+
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT false;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to UUID REFERENCES messages(id) ON DELETE SET NULL;

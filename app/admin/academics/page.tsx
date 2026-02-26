@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
-import { CalendarRange, Plus, X, CheckCircle2 } from 'lucide-react'
+import { CalendarRange, Plus, X, CheckCircle2, Edit } from 'lucide-react'
 
 type AcademicSession = {
   id: string
@@ -30,9 +30,11 @@ export default function AdminAcademicsPage() {
 
   const [showSessionModal, setShowSessionModal] = useState(false)
   const [sessionForm, setSessionForm] = useState({ name: '', start_date: '', end_date: '' })
+  const [editingSession, setEditingSession] = useState<AcademicSession | null>(null)
 
   const [showTermModal, setShowTermModal] = useState(false)
   const [termForm, setTermForm] = useState({ session_id: '', name: '1st Term', start_date: '', end_date: '' })
+  const [editingTerm, setEditingTerm] = useState<AcademicTerm | null>(null)
 
   useEffect(() => {
     ;(async () => {
@@ -79,42 +81,69 @@ export default function AdminAcademicsPage() {
     return map
   }, [terms])
 
-  async function createSession() {
+  async function saveSession() {
     const name = sessionForm.name.trim()
     if (!name) return
 
     try {
-      const { error } = await supabase.from('academic_sessions').insert({
-        name,
-        start_date: sessionForm.start_date || null,
-        end_date: sessionForm.end_date || null,
-        is_active: false,
-      })
-      if (error) throw error
+      if (editingSession) {
+        const { error } = await supabase
+          .from('academic_sessions')
+          .update({
+            name,
+            start_date: sessionForm.start_date || null,
+            end_date: sessionForm.end_date || null,
+          })
+          .eq('id', editingSession.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('academic_sessions').insert({
+          name,
+          start_date: sessionForm.start_date || null,
+          end_date: sessionForm.end_date || null,
+          is_active: false,
+        })
+        if (error) throw error
+      }
       setShowSessionModal(false)
+      setEditingSession(null)
       setSessionForm({ name: '', start_date: '', end_date: '' })
       await loadSessions()
     } catch (e: any) {
-      alert(e?.message || 'Failed to create session')
+      alert(e?.message || 'Failed to save session')
     }
   }
 
-  async function createTerm() {
+  async function saveTerm() {
     if (!termForm.session_id || !termForm.name.trim()) return
     try {
-      const { error } = await supabase.from('academic_terms').insert({
-        session_id: termForm.session_id,
-        name: termForm.name.trim(),
-        start_date: termForm.start_date || null,
-        end_date: termForm.end_date || null,
-        is_active: false,
-      })
-      if (error) throw error
+      if (editingTerm) {
+        const { error } = await supabase
+          .from('academic_terms')
+          .update({
+            session_id: termForm.session_id,
+            name: termForm.name.trim(),
+            start_date: termForm.start_date || null,
+            end_date: termForm.end_date || null,
+          })
+          .eq('id', editingTerm.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('academic_terms').insert({
+          session_id: termForm.session_id,
+          name: termForm.name.trim(),
+          start_date: termForm.start_date || null,
+          end_date: termForm.end_date || null,
+          is_active: false,
+        })
+        if (error) throw error
+      }
       setShowTermModal(false)
+      setEditingTerm(null)
       setTermForm({ session_id: '', name: '1st Term', start_date: '', end_date: '' })
       await loadTerms()
     } catch (e: any) {
-      alert(e?.message || 'Failed to create term')
+      alert(e?.message || 'Failed to save term')
     }
   }
 
@@ -198,6 +227,22 @@ export default function AdminAcademicsPage() {
                 >
                   Set Active
                 </button>
+                <button
+                  onClick={() => {
+                    setEditingSession(s)
+                    setSessionForm({
+                      name: s.name || '',
+                      start_date: s.start_date || '',
+                      end_date: s.end_date || '',
+                    })
+                    setShowSessionModal(true)
+                  }}
+                  className="ml-2 px-4 py-2 rounded-lg border hover:bg-gray-50"
+                  title="Edit session"
+                >
+                  <Edit className="inline w-4 h-4 mr-1" />
+                  Edit
+                </button>
               </div>
 
               <div className="mt-4">
@@ -229,6 +274,23 @@ export default function AdminAcademicsPage() {
                           >
                             Set Active
                           </button>
+                          <button
+                            onClick={() => {
+                              setEditingTerm(t)
+                              setTermForm({
+                                session_id: t.session_id,
+                                name: t.name,
+                                start_date: t.start_date || '',
+                                end_date: t.end_date || '',
+                              })
+                              setShowTermModal(true)
+                            }}
+                            className="ml-2 px-3 py-2 rounded-lg border hover:bg-gray-50 text-sm"
+                            title="Edit term"
+                          >
+                            <Edit className="inline w-4 h-4 mr-1" />
+                            Edit
+                          </button>
                         </div>
                       </div>
                     ))
@@ -245,7 +307,7 @@ export default function AdminAcademicsPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold">Add Academic Session</h3>
+              <h3 className="text-xl font-bold">{editingSession ? 'Edit Academic Session' : 'Add Academic Session'}</h3>
               <button onClick={() => setShowSessionModal(false)}>
                 <X className="w-5 h-5" />
               </button>
@@ -285,8 +347,8 @@ export default function AdminAcademicsPage() {
                 <button onClick={() => setShowSessionModal(false)} className="px-4 py-2 border rounded-lg">
                   Cancel
                 </button>
-                <button onClick={createSession} className="px-4 py-2 bg-blue-600 text-white rounded-lg">
-                  Create
+                <button onClick={saveSession} className="px-4 py-2 bg-blue-600 text-white rounded-lg">
+                  {editingSession ? 'Save' : 'Create'}
                 </button>
               </div>
             </div>
@@ -299,7 +361,7 @@ export default function AdminAcademicsPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold">Add Term</h3>
+              <h3 className="text-xl font-bold">{editingTerm ? 'Edit Term' : 'Add Term'}</h3>
               <button onClick={() => setShowTermModal(false)}>
                 <X className="w-5 h-5" />
               </button>
@@ -357,8 +419,8 @@ export default function AdminAcademicsPage() {
                 <button onClick={() => setShowTermModal(false)} className="px-4 py-2 border rounded-lg">
                   Cancel
                 </button>
-                <button onClick={createTerm} className="px-4 py-2 bg-blue-600 text-white rounded-lg">
-                  Create
+                <button onClick={saveTerm} className="px-4 py-2 bg-blue-600 text-white rounded-lg">
+                  {editingTerm ? 'Save' : 'Create'}
                 </button>
               </div>
             </div>

@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { UserCheck, ArrowLeft, BookOpen, Check, X, Clock, ShieldCheck } from 'lucide-react'
+import { UserCheck, BookOpen, Check, X, Clock, ShieldCheck } from 'lucide-react'
 import { Class, Student, Attendance, AttendanceStatus } from '@/types/database'
 
 export default function TeacherAttendancePage() {
@@ -20,23 +20,79 @@ export default function TeacherAttendancePage() {
   const [existingRecords, setExistingRecords] = useState<Attendance[]>([])
   const [saved, setSaved] = useState(false)
 
-  useEffect(() => {
-    checkAuth()
-  }, [])
+  const loadStudents = useCallback(async () => {
+    const { data: enrollments } = await supabase
+      .from('class_enrollments')
+      .select('student_id')
+      .eq('class_id', selectedClass)
+    if (enrollments && enrollments.length > 0) {
+      const studentIds = enrollments.map(e => e.student_id)
+      const { data } = await supabase
+        .from('students')
+        .select('*')
+        .in('id', studentIds)
+        .order('full_name')
+      setStudents(data || [])
+      const initial: Record<string, { status: AttendanceStatus; notes: string }> = {}
+      for (const s of data || []) {
+        initial[s.id] = { status: 'present', notes: '' }
+      }
+      setEntries(initial)
+    } else {
+      setStudents([])
+      setEntries({})
+    }
+  }, [selectedClass])
 
   useEffect(() => {
     if (selectedClass) {
       loadStudents()
     }
-  }, [selectedClass])
+  }, [selectedClass, loadStudents])
+
+  const loadExistingAttendance = useCallback(async () => {
+    const res = await fetch(`/api/attendance?class_id=${selectedClass}&date=${selectedDate}`)
+    const data = await res.json()
+    const records: Attendance[] = data.records || []
+    setExistingRecords(records)
+    if (records.length > 0) {
+      const updated = { ...entries }
+      for (const r of records) {
+        if (updated[r.student_id]) {
+          updated[r.student_id] = { status: r.status, notes: r.notes || '' }
+        }
+      }
+      setEntries(updated)
+    }
+  }, [selectedClass, selectedDate, entries])
 
   useEffect(() => {
     if (selectedClass && selectedDate && students.length > 0) {
       loadExistingAttendance()
     }
-  }, [selectedClass, selectedDate, students])
+  }, [selectedClass, selectedDate, students, loadExistingAttendance])
 
-  const checkAuth = async () => {
+  const loadClasses = useCallback(async (userId: string) => {
+    const { data: teacher } = await supabase
+      .from('teachers')
+      .select('id')
+      .eq('user_id', userId)
+      .single()
+
+    if (teacher) {
+      const { data } = await supabase
+        .from('classes')
+        .select('*')
+        .eq('teacher_id', teacher.id)
+
+      setClasses(data || [])
+      if (data && data.length > 0) {
+        setSelectedClass(data[0].id)
+      }
+    }
+  }, [])
+
+  const checkAuth = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/auth/login'); return }
@@ -55,73 +111,15 @@ export default function TeacherAttendancePage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [router, loadClasses])
 
-  const loadClasses = async (userId: string) => {
-    const { data: teacher } = await supabase
-      .from('teachers')
-      .select('id')
-      .eq('user_id', userId)
-      .single()
+ 
 
-    if (teacher) {
-      const { data } = await supabase
-        .from('classes')
-        .select('*')
-        .eq('teacher_id', teacher.id)
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
 
-      setClasses(data || [])
-      if (data && data.length > 0) {
-        setSelectedClass(data[0].id)
-      }
-    }
-  }
-
-  const loadStudents = async () => {
-    const { data: enrollments } = await supabase
-      .from('class_enrollments')
-      .select('student_id')
-      .eq('class_id', selectedClass)
-
-    if (enrollments && enrollments.length > 0) {
-      const studentIds = enrollments.map(e => e.student_id)
-      const { data } = await supabase
-        .from('students')
-        .select('*')
-        .in('id', studentIds)
-        .order('full_name')
-
-      setStudents(data || [])
-
-      // Initialize all as present
-      const initial: Record<string, { status: AttendanceStatus; notes: string }> = {}
-      for (const s of data || []) {
-        initial[s.id] = { status: 'present', notes: '' }
-      }
-      setEntries(initial)
-    } else {
-      setStudents([])
-      setEntries({})
-    }
-  }
-
-  const loadExistingAttendance = async () => {
-    const res = await fetch(`/api/attendance?class_id=${selectedClass}&date=${selectedDate}`)
-    const data = await res.json()
-    const records: Attendance[] = data.records || []
-    setExistingRecords(records)
-
-    // Pre-fill entries from existing records
-    if (records.length > 0) {
-      const updated = { ...entries }
-      for (const r of records) {
-        if (updated[r.student_id]) {
-          updated[r.student_id] = { status: r.status, notes: r.notes || '' }
-        }
-      }
-      setEntries(updated)
-    }
-  }
+ 
 
   const setStudentStatus = (studentId: string, status: AttendanceStatus) => {
     setEntries(prev => ({
@@ -168,11 +166,6 @@ export default function TeacherAttendancePage() {
     }
   }
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/auth/login')
-  }
-
   const statusConfig: Record<AttendanceStatus, { label: string; color: string; bg: string; icon: typeof Check }> = {
     present: { label: 'Present', color: 'text-green-700', bg: 'bg-green-100 border-green-300', icon: Check },
     absent: { label: 'Absent', color: 'text-red-700', bg: 'bg-red-100 border-red-300', icon: X },
@@ -192,24 +185,7 @@ export default function TeacherAttendancePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
-              <button onClick={() => router.push('/teacher')} className="text-gray-600 hover:text-gray-900">
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <h1 className="text-xl font-bold text-gray-900">Take Attendance</h1>
-            </div>
-            <button onClick={handleLogout} className="text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg hover:bg-gray-100">
-              Logout
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div>
         <div className="mb-6">
           <div className="flex items-center gap-4 mb-4">
             <UserCheck className="w-10 h-10 text-teal-600" />
@@ -346,7 +322,6 @@ export default function TeacherAttendancePage() {
             <p className="text-gray-600">Select a class to take attendance.</p>
           </div>
         )}
-      </main>
     </div>
   )
 }

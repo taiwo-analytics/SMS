@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { ClipboardList, ArrowLeft, BookOpen, Users } from 'lucide-react'
-import { Grade, Student, Class } from '@/types/database'
+import { Grade, Student, Class, AcademicTerm } from '@/types/database'
 
 export default function ParentGradesPage() {
   const router = useRouter()
@@ -12,7 +12,9 @@ export default function ParentGradesPage() {
   const [children, setChildren] = useState<Student[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [classes, setClasses] = useState<Class[]>([])
+  const [terms, setTerms] = useState<AcademicTerm[]>([])
   const [selectedChild, setSelectedChild] = useState<string>('all')
+  const [selectedTerm, setSelectedTerm] = useState<string>('all')
 
   useEffect(() => {
     checkAuthAndLoad()
@@ -72,6 +74,11 @@ export default function ParentGradesPage() {
         }
       }
 
+      // Load terms
+      const { data: termsData } = await supabase
+        .from('academic_terms').select('*').order('created_at', { ascending: false })
+      setTerms(termsData || [])
+
       // Load grades from API (returns all children's grades)
       const res = await fetch('/api/grades')
       const data = await res.json()
@@ -89,9 +96,9 @@ export default function ParentGradesPage() {
     router.push('/auth/login')
   }
 
-  const filteredGrades = selectedChild === 'all'
-    ? grades
-    : grades.filter(g => g.student_id === selectedChild)
+  const filteredGrades = grades
+    .filter(g => selectedChild === 'all' || g.student_id === selectedChild)
+    .filter(g => selectedTerm === 'all' || g.term_id === selectedTerm)
 
   // Group grades by child
   const gradesByChild = children.map(child => {
@@ -155,6 +162,21 @@ export default function ParentGradesPage() {
                   </option>
                 ))}
               </select>
+              {terms.length > 0 && (
+                <>
+                  <label className="text-sm font-medium text-gray-700">Term:</label>
+                  <select
+                    value={selectedTerm}
+                    onChange={(e) => setSelectedTerm(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">All Terms</option>
+                    {terms.map((term) => (
+                      <option key={term.id} value={term.id}>{term.name}</option>
+                    ))}
+                  </select>
+                </>
+              )}
             </div>
           )}
         </div>

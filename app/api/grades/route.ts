@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
 
 export const runtime = 'nodejs'
 
@@ -10,17 +9,17 @@ export const runtime = 'nodejs'
  */
 export async function GET(req: Request) {
   try {
-    const supabase = createServerComponentClient({ cookies })
+    const supabase = await createServerSupabaseClient()
 
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
-      .eq('id', session.user.id)
+      .eq('id', user.id)
       .single()
 
     const role = profile?.role
@@ -35,7 +34,7 @@ export async function GET(req: Request) {
       const { data: teacher } = await supabase
         .from('teachers')
         .select('id')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
         .single()
 
       if (!teacher) {
@@ -49,7 +48,7 @@ export async function GET(req: Request) {
       const { data: student } = await supabase
         .from('students')
         .select('id')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
         .single()
 
       if (!student) {
@@ -63,7 +62,7 @@ export async function GET(req: Request) {
       const { data: parent } = await supabase
         .from('parents')
         .select('id')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
         .single()
 
       if (!parent) {
@@ -107,17 +106,17 @@ export async function GET(req: Request) {
  */
 export async function POST(req: Request) {
   try {
-    const supabase = createServerComponentClient({ cookies })
+    const supabase = await createServerSupabaseClient()
 
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
-      .eq('id', session.user.id)
+      .eq('id', user.id)
       .single()
 
     if (profile?.role !== 'teacher') {
@@ -127,7 +126,7 @@ export async function POST(req: Request) {
     const { data: teacher } = await supabase
       .from('teachers')
       .select('id')
-      .eq('user_id', session.user.id)
+      .eq('user_id', user.id)
       .single()
 
     if (!teacher) {
@@ -183,17 +182,17 @@ export async function POST(req: Request) {
  */
 export async function DELETE(req: Request) {
   try {
-    const supabase = createServerComponentClient({ cookies })
+    const supabase = await createServerSupabaseClient()
 
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
-      .eq('id', session.user.id)
+      .eq('id', user.id)
       .single()
 
     if (profile?.role !== 'teacher' && profile?.role !== 'admin') {
@@ -211,7 +210,7 @@ export async function DELETE(req: Request) {
       const { data: teacher } = await supabase
         .from('teachers')
         .select('id')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
         .single()
 
       if (!teacher) {

@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { BookOpen, ArrowLeft, Users } from 'lucide-react'
+import { BookOpen, Users } from 'lucide-react'
 import { Class } from '@/types/database'
 
 export default function TeacherClassesPage() {
@@ -12,11 +12,7 @@ export default function TeacherClassesPage() {
   const [classes, setClasses] = useState<Class[]>([])
   const [teacherId, setTeacherId] = useState<string | null>(null)
 
-  useEffect(() => {
-    checkAuthAndLoadClasses()
-  }, [])
-
-  const checkAuthAndLoadClasses = async () => {
+  const checkAuthAndLoadClasses = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       
@@ -24,49 +20,36 @@ export default function TeacherClassesPage() {
         router.push('/auth/login')
         return
       }
-
       const { data: profile } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', user.id)
         .single()
-
       if (profile?.role !== 'teacher') {
         router.push('/')
         return
       }
-
-      // Get teacher record to get teacher_id
       const { data: teacher } = await supabase
         .from('teachers')
         .select('id')
         .eq('user_id', user.id)
         .single()
-
       if (teacher) {
         setTeacherId(teacher.id)
-        
-        // Load only classes assigned to this teacher
         const { data: teacherClasses, error } = await supabase
           .from('classes')
           .select('*')
           .eq('teacher_id', teacher.id)
           .order('created_at', { ascending: false })
-
         if (error) throw error
-
-        // Load teacher's subjects
         const { data: subjects } = await supabase
           .from('teacher_subjects')
           .select('subject, class_level')
           .eq('teacher_id', teacher.id)
-
-        // Enrich classes with subject info
         const classesWithSubjects = (teacherClasses || []).map(cls => ({
           ...cls,
           assignedSubjects: subjects?.filter(s => !s.class_level || s.class_level === (cls as any).class_level).map(s => s.subject) || []
         }))
-
         setClasses(classesWithSubjects)
       }
     } catch (error) {
@@ -74,42 +57,20 @@ export default function TeacherClassesPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [router])
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/auth/login')
-  }
+  useEffect(() => {
+    checkAuthAndLoadClasses()
+  }, [checkAuthAndLoadClasses])
+
+ 
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => router.push('/')}
-                className="text-gray-600 hover:text-gray-900"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <h1 className="text-xl font-bold text-gray-900">My Classes</h1>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg hover:bg-gray-100"
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div>
         <div className="bg-white rounded-lg shadow p-8">
           <div className="flex items-center gap-4 mb-6">
             <BookOpen className="w-12 h-12 text-blue-600" />
@@ -140,9 +101,7 @@ export default function TeacherClassesPage() {
                   {(classItem as any).class_level && (
                     <p className="text-xs text-gray-500 mb-1">Level: {(classItem as any).class_level}</p>
                   )}
-                  {(classItem as any).department && (
-                    <p className="text-xs text-gray-500 mb-1">Department: {(classItem as any).department}</p>
-                  )}
+                  {/* Department removed from class UI */}
                   {classItem.subject && (
                     <p className="text-gray-600 mb-2">{classItem.subject}</p>
                   )}
@@ -167,7 +126,6 @@ export default function TeacherClassesPage() {
             </div>
           )}
         </div>
-      </main>
     </div>
   )
 }

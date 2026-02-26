@@ -1,12 +1,12 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -25,14 +25,38 @@ export default function LoginPage() {
 
       if (signInError) throw signInError
 
-      if (data.user) {
-        router.push('/')
-        router.refresh()
+      if (data.session) {
+        const redirectTo = searchParams.get('redirectTo')
+        if (redirectTo) {
+          window.location.replace(redirectTo)
+          return
+        }
+
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', data.session.user.id)
+          .single()
+
+        const role = profile?.role
+        const target =
+          role === 'admin'
+            ? '/admin'
+            : role === 'teacher'
+            ? '/teacher/classes'
+            : role === 'student'
+            ? '/student'
+            : role === 'parent'
+            ? '/parent/children'
+            : '/'
+
+        window.location.replace(target)
+        return
       }
     } catch (err: any) {
       console.error('Login error:', err)
       if (err.message?.includes('Invalid login credentials')) {
-        setError('Invalid email or password. Please check your credentials or sign up for a new account.')
+        setError('Invalid email or password. Please check your credentials or contact an administrator to create your account.')
       } else if (err.message?.includes('Email not confirmed')) {
         setError('Please check your email and confirm your account before logging in.')
       } else if (err.message?.includes('fetch')) {
@@ -99,12 +123,17 @@ export default function LoginPage() {
         </form>
 
         <p className="mt-6 text-center text-sm text-gray-600">
-          Don't have an account?{' '}
-          <Link href="/auth/signup" className="text-blue-600 hover:underline">
-            Sign up here
-          </Link>
+          Accounts are created by administrators.
         </p>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+      <LoginContent />
+    </Suspense>
   )
 }

@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { ClipboardList, ArrowLeft, BookOpen, Plus, Trash2, X, Calendar } from 'lucide-react'
+import { ClipboardList, BookOpen, Plus, Trash2, X, Calendar } from 'lucide-react'
 import { Class, Assignment } from '@/types/database'
 
 export default function TeacherAssignmentsPage() {
@@ -20,15 +20,37 @@ export default function TeacherAssignmentsPage() {
     due_date: '',
   })
 
-  useEffect(() => {
-    checkAuth()
-  }, [])
+  const loadAssignments = useCallback(async () => {
+    const res = await fetch(`/api/assignments?class_id=${selectedClass}`)
+    const data = await res.json()
+    setAssignments(data.assignments || [])
+  }, [selectedClass])
 
   useEffect(() => {
     if (selectedClass) loadAssignments()
-  }, [selectedClass])
+  }, [selectedClass, loadAssignments])
 
-  const checkAuth = async () => {
+  const loadClasses = useCallback(async (userId: string) => {
+    const { data: teacher } = await supabase
+      .from('teachers')
+      .select('id')
+      .eq('user_id', userId)
+      .single()
+
+    if (teacher) {
+      const { data } = await supabase
+        .from('classes')
+        .select('*')
+        .eq('teacher_id', teacher.id)
+
+      setClasses(data || [])
+      if (data && data.length > 0) {
+        setSelectedClass(data[0].id)
+      }
+    }
+  }, [])
+
+  const checkAuth = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/auth/login'); return }
@@ -47,33 +69,15 @@ export default function TeacherAssignmentsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [router, loadClasses])
 
-  const loadClasses = async (userId: string) => {
-    const { data: teacher } = await supabase
-      .from('teachers')
-      .select('id')
-      .eq('user_id', userId)
-      .single()
+ 
 
-    if (teacher) {
-      const { data } = await supabase
-        .from('classes')
-        .select('*')
-        .eq('teacher_id', teacher.id)
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
 
-      setClasses(data || [])
-      if (data && data.length > 0) {
-        setSelectedClass(data[0].id)
-      }
-    }
-  }
-
-  const loadAssignments = async () => {
-    const res = await fetch(`/api/assignments?class_id=${selectedClass}`)
-    const data = await res.json()
-    setAssignments(data.assignments || [])
-  }
+ 
 
   const handleCreate = async () => {
     if (!formData.title.trim() || !selectedClass) return
@@ -122,34 +126,12 @@ export default function TeacherAssignmentsPage() {
     }
   }
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/auth/login')
-  }
-
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
-              <button onClick={() => router.push('/teacher')} className="text-gray-600 hover:text-gray-900">
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <h1 className="text-xl font-bold text-gray-900">Assignments</h1>
-            </div>
-            <button onClick={handleLogout} className="text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg hover:bg-gray-100">
-              Logout
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div>
         <div className="mb-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
@@ -228,7 +210,6 @@ export default function TeacherAssignmentsPage() {
             <p className="text-gray-600">Select a class to manage assignments.</p>
           </div>
         )}
-      </main>
 
       {/* Create Modal */}
       {showModal && (

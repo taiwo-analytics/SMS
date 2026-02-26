@@ -2,11 +2,11 @@
 
 import { useRouter, usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { 
-  Shield, 
-  GraduationCap, 
-  User, 
-  BookOpen, 
+import {
+  Shield,
+  GraduationCap,
+  User,
+  BookOpen,
   Book,
   Users,
   BarChart3,
@@ -20,7 +20,8 @@ import {
   CreditCard,
   UserCheck,
   Bell,
-  Calendar
+  Calendar,
+  Clock
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 
@@ -43,6 +44,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     { name: 'Subjects', href: '/admin/subjects', icon: Book },
     { name: 'Events', href: '/admin/events', icon: Calendar },
     { name: 'Academics', href: '/admin/academics', icon: Calendar },
+    { name: 'Timetable', href: '/admin/timetable', icon: Clock },
+    { name: 'Broadsheet', href: '/admin/results/broadsheet', icon: BarChart3 },
     { name: 'Messages', href: '/admin/messages', icon: MessageSquare },
     { name: 'Library', href: '/admin/library', icon: Library },
     { name: 'Inventory', href: '/admin/inventory', icon: Package },
@@ -54,28 +57,114 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const [eventCount, setEventCount] = useState(0)
   const [showNotifications, setShowNotifications] = useState(false)
   const [upcomingEvents, setUpcomingEvents] = useState<any[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
 
   useEffect(() => {
     loadUpcomingEvents()
+    loadUnreadCount()
     const interval = setInterval(loadUpcomingEvents, 60000) // Refresh every minute
-    return () => clearInterval(interval)
+    const msgInterval = setInterval(loadUnreadCount, 60000)
+    const eventsChannel = supabase
+      .channel('events-admin')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'events' },
+        () => {
+          loadUpcomingEvents()
+        }
+      )
+      .subscribe()
+    const messagesChannel = supabase
+      .channel('messages-admin')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'messages' },
+        () => {
+          loadUnreadCount()
+        }
+      )
+      .subscribe()
+    return () => {
+      clearInterval(interval)
+      clearInterval(msgInterval)
+      supabase.removeChannel(eventsChannel)
+      supabase.removeChannel(messagesChannel)
+    }
   }, [])
+
+  const pad2 = (n: number) => String(n).padStart(2, '0')
+  const parseTime24 = (s?: string): string | null => {
+    if (!s) return null
+    const t = s.trim().toUpperCase()
+    const m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i)
+    if (!m) return null
+    let h = Number(m[1]); const mm = Number(m[2]); const ap = m[3]
+    if (ap === 'PM' && h < 12) h += 12
+    if (ap === 'AM' && h === 12) h = 0
+    return `${pad2(h)}:${pad2(mm)}`
+  }
+  const splitRange24 = (s?: string): { start: string | null, end: string | null } => {
+    if (!s) return { start: null, end: null }
+    if (!s.includes('-')) return { start: parseTime24(s), end: null }
+    const [a, b] = s.split('-')
+    return { start: parseTime24(a || ''), end: parseTime24(b || '') }
+  }
+  const resolveStartEnd = (ev: any) => {
+    let start = ev.start_at ? new Date(ev.start_at) : new Date(ev.event_date)
+    const { start: s24, end: e24 } = splitRange24(ev.event_time)
+    if (s24) {
+      const [h, m] = s24.split(':').map(Number)
+      start.setHours(h, m, 0, 0)
+    }
+    let end: Date
+    if (ev.end_at) {
+      end = new Date(ev.end_at)
+    } else if (e24) {
+      end = new Date(start)
+      const [h2, m2] = e24.split(':').map(Number)
+      end.setHours(h2, m2, 0, 0)
+    } else {
+      end = new Date(start.getTime() + 60 * 60 * 1000)
+    }
+    return { start, end }
+  }
 
   const loadUpcomingEvents = async () => {
     try {
       const { data } = await supabase
         .from('events')
         .select('*')
-        .gte('event_date', new Date().toISOString())
         .order('event_date', { ascending: true })
-        .limit(10)
+        .limit(200)
 
       if (data) {
-        setUpcomingEvents(data)
-        setEventCount(data.length)
+        const now = new Date()
+        const cutoff = new Date(now.getTime() - 10 * 60 * 1000)
+        const enriched = (data as any[]).map((e) => ({ raw: e, ...resolveStartEnd(e) }))
+        const upcoming = enriched
+          .filter((e) => e.end >= cutoff)
+          .sort((a, b) => a.start.getTime() - b.start.getTime())
+          .slice(0, 10)
+          .map((e) => e.raw)
+        setUpcomingEvents(upcoming)
+        setEventCount(upcoming.length)
       }
     } catch (error) {
       console.error('Error loading events:', error)
+    }
+  }
+
+  const loadUnreadCount = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('id, is_read, read_at, recipient_role')
+        .in('recipient_role', ['admin', 'all'])
+      if (error) throw error
+      const count = (data || []).filter((m: any) => (m.recipient_role === 'admin' || m.recipient_role === 'all') && (m.is_read === false || m.read_at == null)).length
+      setUnreadCount(count)
+    } catch (e) {
+      console.error('Error loading unread messages:', e)
     }
   }
 
@@ -131,17 +220,20 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                         <p className="text-sm text-gray-500 p-4 text-center">No upcoming events</p>
                       ) : (
                         upcomingEvents.map((event) => {
-                          const eventDate = new Date(event.event_date)
+                          const { start, end } = resolveStartEnd(event as any)
                           const now = new Date()
-                          const diffTime = eventDate.getTime() - now.getTime()
+                          const diffTime = start.getTime() - now.getTime()
                           const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-                          const isOngoing = diffTime < 0 && Math.abs(diffTime) < 24 * 60 * 60 * 1000
+                          const isOngoing = now >= start && now <= end
                           
                           return (
                             <div key={event.id} className="p-3 hover:bg-gray-50 rounded-lg mb-1">
                               <p className="font-medium text-sm text-gray-900">{event.title}</p>
+                              {event.description && (
+                                <p className="text-xs text-gray-600">{event.description}</p>
+                              )}
                               <p className="text-xs text-gray-500">
-                                {eventDate.toLocaleDateString()} at {eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {start.toLocaleDateString()} at {start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </p>
                               <p className="text-xs mt-1">
                                 {isOngoing ? (
@@ -178,7 +270,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         <aside
           className={`${
             sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-          } fixed lg:static inset-y-0 left-0 z-40 w-64 bg-white shadow-lg transform transition-transform duration-200 ease-in-out lg:translate-x-0 pt-16 lg:pt-0`}
+          } fixed inset-y-0 left-0 z-40 w-64 bg-white shadow-lg transform transition-transform duration-200 ease-in-out lg:translate-x-0 pt-16`}
         >
           <div className="h-full overflow-y-auto py-4">
             <nav className="space-y-1 px-3">
@@ -199,7 +291,12 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                     }`}
                   >
                     <Icon className="w-5 h-5" />
-                    <span>{item.name}</span>
+                    <span className="flex-1 text-left">{item.name}</span>
+                    {item.name === 'Messages' && unreadCount > 0 && (
+                      <span className="ml-auto bg-red-500 text-white text-xs rounded-full px-2 py-0.5">
+                        {unreadCount}
+                      </span>
+                    )}
                   </button>
                 )
               })}

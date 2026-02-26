@@ -4,14 +4,16 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { ClipboardList, ArrowLeft, BookOpen } from 'lucide-react'
-import { Grade, Class } from '@/types/database'
+import { Grade, Class, AcademicTerm } from '@/types/database'
 
 export default function StudentGradesPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [grades, setGrades] = useState<Grade[]>([])
   const [classes, setClasses] = useState<Class[]>([])
+  const [terms, setTerms] = useState<AcademicTerm[]>([])
   const [selectedClass, setSelectedClass] = useState<string>('all')
+  const [selectedTerm, setSelectedTerm] = useState<string>('all')
 
   useEffect(() => {
     checkAuthAndLoad()
@@ -60,6 +62,11 @@ export default function StudentGradesPage() {
         }
       }
 
+      // Load terms
+      const { data: termsData } = await supabase
+        .from('academic_terms').select('*').order('created_at', { ascending: false })
+      setTerms(termsData || [])
+
       // Load grades from API
       const res = await fetch('/api/grades')
       const data = await res.json()
@@ -77,9 +84,9 @@ export default function StudentGradesPage() {
     router.push('/auth/login')
   }
 
-  const filteredGrades = selectedClass === 'all'
-    ? grades
-    : grades.filter(g => g.class_id === selectedClass)
+  const filteredGrades = grades
+    .filter(g => selectedClass === 'all' || g.class_id === selectedClass)
+    .filter(g => selectedTerm === 'all' || g.term_id === selectedTerm)
 
   // Calculate overall stats
   const totalGrades = filteredGrades.length
@@ -98,7 +105,7 @@ export default function StudentGradesPage() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-4">
               <button
-                onClick={() => router.push('/')}
+                onClick={() => router.push('/student')}
                 className="text-gray-600 hover:text-gray-900"
               >
                 <ArrowLeft className="w-5 h-5" />
@@ -155,6 +162,21 @@ export default function StudentGradesPage() {
                   </option>
                 ))}
               </select>
+              {terms.length > 0 && (
+                <>
+                  <label className="text-sm font-medium text-gray-700">Term:</label>
+                  <select
+                    value={selectedTerm}
+                    onChange={(e) => setSelectedTerm(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">All Terms</option>
+                    {terms.map((term) => (
+                      <option key={term.id} value={term.id}>{term.name}</option>
+                    ))}
+                  </select>
+                </>
+              )}
             </div>
           )}
         </div>

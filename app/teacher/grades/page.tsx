@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { ClipboardList, ArrowLeft, BookOpen, Trash2 } from 'lucide-react'
-import { Class, Student, Grade } from '@/types/database'
+import { ClipboardList, BookOpen, Trash2 } from 'lucide-react'
+import { Class, Student, Grade, AcademicTerm } from '@/types/database'
 
 export default function TeacherGradesPage() {
   const router = useRouter()
@@ -13,6 +13,8 @@ export default function TeacherGradesPage() {
   const [selectedClass, setSelectedClass] = useState<string>('')
   const [students, setStudents] = useState<Student[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
+  const [terms, setTerms] = useState<AcademicTerm[]>([])
+  const [selectedTerm, setSelectedTerm] = useState<string>('all')
   const [showModal, setShowModal] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formData, setFormData] = useState({
@@ -21,48 +23,53 @@ export default function TeacherGradesPage() {
     score: 0,
     max_score: 100,
     notes: '',
+    term_id: '',
   })
 
-  useEffect(() => {
-    checkAuth()
-  }, [])
+  const loadStudentsAndGrades = useCallback(async () => {
+    if (!selectedClass) return
+    try {
+      const { data: enrollments } = await supabase
+        .from('class_enrollments')
+        .select('student_id')
+        .eq('class_id', selectedClass)
+      if (enrollments && enrollments.length > 0) {
+        const studentIds = enrollments.map(e => e.student_id)
+        const { data: studentsData } = await supabase
+          .from('students')
+          .select('*')
+          .in('id', studentIds)
+        setStudents(studentsData || [])
+      } else {
+        setStudents([])
+      }
+      const res = await fetch(`/api/grades?class_id=${selectedClass}`)
+      const data = await res.json()
+      setGrades(data.grades || [])
+    } catch (error) {
+      console.error('Error loading students/grades:', error)
+    }
+  }, [selectedClass])
 
   useEffect(() => {
     if (selectedClass) {
       loadStudentsAndGrades()
     }
-  }, [selectedClass])
+  }, [selectedClass, loadStudentsAndGrades])
 
-  const checkAuth = async () => {
+  const loadTerms = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-
-      if (!user) {
-        router.push('/auth/login')
-        return
-      }
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single()
-
-      if (profile?.role !== 'teacher') {
-        router.push('/')
-        return
-      }
-
-      await loadClasses(user.id)
+      const { data } = await supabase
+        .from('academic_terms')
+        .select('*')
+        .order('created_at', { ascending: false })
+      setTerms(data || [])
     } catch (error) {
-      console.error('Error checking auth:', error)
-      router.push('/auth/login')
-    } finally {
-      setLoading(false)
+      console.error('Error loading terms:', error)
     }
-  }
+  }, [])
 
-  const loadClasses = async (userId: string) => {
+  const loadClasses = useCallback(async (userId: string) => {
     try {
       const { data: teacher } = await supabase
         .from('teachers')
@@ -84,38 +91,43 @@ export default function TeacherGradesPage() {
     } catch (error) {
       console.error('Error loading classes:', error)
     }
-  }
+  }, [])
 
-  const loadStudentsAndGrades = async () => {
-    if (!selectedClass) return
-
+  const checkAuth = useCallback(async () => {
     try {
-      // Load students enrolled in this class
-      const { data: enrollments } = await supabase
-        .from('class_enrollments')
-        .select('student_id')
-        .eq('class_id', selectedClass)
+      const { data: { user } } = await supabase.auth.getUser()
 
-      if (enrollments && enrollments.length > 0) {
-        const studentIds = enrollments.map(e => e.student_id)
-        const { data: studentsData } = await supabase
-          .from('students')
-          .select('*')
-          .in('id', studentIds)
-
-        setStudents(studentsData || [])
-      } else {
-        setStudents([])
+      if (!user) {
+        router.push('/auth/login')
+        return
       }
 
-      // Load grades from API
-      const res = await fetch(`/api/grades?class_id=${selectedClass}`)
-      const data = await res.json()
-      setGrades(data.grades || [])
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+      if (profile?.role !== 'teacher') {
+        router.push('/')
+        return
+      }
+
+      await loadClasses(user.id)
+      await loadTerms()
     } catch (error) {
-      console.error('Error loading students/grades:', error)
+      console.error('Error checking auth:', error)
+      router.push('/auth/login')
+    } finally {
+      setLoading(false)
     }
-  }
+  }, [router, loadClasses, loadTerms])
+
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
+
+ 
 
   const handleSubmitGrade = async () => {
     if (!formData.student_id || !formData.assignment_name) return
@@ -132,6 +144,7 @@ export default function TeacherGradesPage() {
           score: formData.score,
           max_score: formData.max_score,
           notes: formData.notes || null,
+          term_id: formData.term_id || null,
         }),
       })
 
@@ -150,6 +163,7 @@ export default function TeacherGradesPage() {
         score: 0,
         max_score: 100,
         notes: '',
+        term_id: '',
       })
     } catch (error) {
       console.error('Error saving grade:', error)
@@ -175,40 +189,14 @@ export default function TeacherGradesPage() {
     }
   }
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/auth/login')
-  }
+  const filteredGrades = selectedTerm === 'all' ? grades : grades.filter(g => g.term_id === selectedTerm)
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => router.push('/teacher')}
-                className="text-gray-600 hover:text-gray-900"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <h1 className="text-xl font-bold text-gray-900">Manage Grades</h1>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg hover:bg-gray-100"
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div>
         <div className="mb-6">
           <div className="flex items-center gap-4 mb-4">
             <ClipboardList className="w-10 h-10 text-purple-600" />
@@ -227,6 +215,17 @@ export default function TeacherGradesPage() {
                 <option key={classItem.id} value={classItem.id}>
                   {classItem.name} {classItem.subject ? `- ${classItem.subject}` : ''}
                 </option>
+              ))}
+            </select>
+            <label className="text-sm font-medium text-gray-700">Term:</label>
+            <select
+              value={selectedTerm}
+              onChange={(e) => setSelectedTerm(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="all">All Terms</option>
+              {terms.map((term) => (
+                <option key={term.id} value={term.id}>{term.name}</option>
               ))}
             </select>
             {selectedClass && (
@@ -266,14 +265,14 @@ export default function TeacherGradesPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {grades.length === 0 ? (
+                {filteredGrades.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                       No grades recorded yet. Click &quot;Add Grade&quot; to start recording grades.
                     </td>
                   </tr>
                 ) : (
-                  grades.map((grade) => {
+                  filteredGrades.map((grade) => {
                     const student = students.find(s => s.id === grade.student_id)
                     const percentage = ((grade.score / grade.max_score) * 100).toFixed(1)
                     return (
@@ -393,6 +392,21 @@ export default function TeacherGradesPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Term (Optional)
+                  </label>
+                  <select
+                    value={formData.term_id}
+                    onChange={(e) => setFormData({ ...formData, term_id: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  >
+                    <option value="">No term</option>
+                    {terms.map((term) => (
+                      <option key={term.id} value={term.id}>{term.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
                     Notes (Optional)
                   </label>
                   <textarea
@@ -421,7 +435,6 @@ export default function TeacherGradesPage() {
             </div>
           </div>
         )}
-      </main>
     </div>
   )
 }

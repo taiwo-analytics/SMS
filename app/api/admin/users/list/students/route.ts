@@ -39,11 +39,23 @@ export async function GET() {
       .select('*')
       .in('id', classIds)
 
+    // Fetch auth users to get emails
+    const userIds = (students || []).map((s: any) => s.user_id).filter(Boolean)
+    const emailMap: Record<string, string> = {}
+    if (userIds.length > 0) {
+      const { data: authData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+      if (authData?.users) {
+        for (const u of authData.users) {
+          if (u.email) emailMap[u.id] = u.email
+        }
+      }
+    }
+
     const studentsWithDetails = (students || []).map((student: any) => ({
       ...student,
       parent: (parents || []).find((p: any) => p.id === student.parent_id) || null,
       classes: (enrollments || []).filter((en: any) => en.student_id === student.id).map((en: any) => (classes || []).find((c: any) => c.id === en.class_id)).filter(Boolean),
-      email: 'N/A'
+      email: emailMap[student.user_id] || 'N/A'
     }))
 
     return NextResponse.json({ students: studentsWithDetails })

@@ -9,26 +9,26 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "next": "^14.0.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "@supabase/supabase-js": "^2.38.0",
-    "@supabase/auth-helpers-nextjs": "^0.8.7",
-    "@supabase/auth-helpers-react": "^0.4.2",
+    "@supabase/ssr": "^0.8.0",
+    "@supabase/supabase-js": "^2.97.0",
     "lucide-react": "^0.294.0",
-    "papaparse": "^5.4.1"
+    "next": "^14.0.0",
+    "papaparse": "^5.4.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/papaparse": "^5.2.6",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
-    "typescript": "^5.2.0",
-    "tailwindcss": "^3.3.0",
-    "postcss": "^8.4.0",
     "autoprefixer": "^10.4.16",
+    "dotenv": "^17.3.1",
     "eslint": "^8.0.0",
-    "eslint-config-next": "^14.0.0"
+    "eslint-config-next": "^14.0.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.3.0",
+    "typescript": "^5.2.0"
   },
   "description": "A comprehensive School Management System built with Next.js, Supabase, and TypeScript. Features role-based access control for Admin, Teacher, Student, and Parent users.",
   "main": "next.config.js",

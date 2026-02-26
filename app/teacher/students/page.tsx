@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { Users, ArrowLeft, BookOpen } from 'lucide-react'
+import { Users, BookOpen } from 'lucide-react'
 import { Student, Class } from '@/types/database'
 
 export default function TeacherStudentsPage() {
@@ -13,11 +13,46 @@ export default function TeacherStudentsPage() {
   const [selectedClass, setSelectedClass] = useState<string>('all')
   const [classes, setClasses] = useState<Class[]>([])
 
-  useEffect(() => {
-    checkAuth()
+  const loadData = useCallback(async (userId: string) => {
+    try {
+      const { data: teacher } = await supabase
+        .from('teachers')
+        .select('id')
+        .eq('user_id', userId)
+        .single()
+      if (!teacher) return
+      const { data: teacherClasses } = await supabase
+        .from('classes')
+        .select('*')
+        .eq('teacher_id', teacher.id)
+      setClasses(teacherClasses || [])
+      const classIds = (teacherClasses || []).map(c => c.id)
+      if (classIds.length === 0) return
+      const { data: enrollments } = await supabase
+        .from('class_enrollments')
+        .select('student_id, class_id')
+        .in('class_id', classIds)
+      if (!enrollments) return
+      const studentIds = Array.from(new Set(enrollments.map(e => e.student_id)))
+      const { data: studentsData } = await supabase
+        .from('students')
+        .select('*')
+        .in('id', studentIds)
+      const studentsWithClasses = (studentsData || []).map(student => {
+        const studentEnrollments = enrollments.filter(e => e.student_id === student.id)
+        const studentClassIds = studentEnrollments.map(e => e.class_id)
+        const studentClassNames = (teacherClasses || [])
+          .filter(c => studentClassIds.includes(c.id))
+          .map(c => c.name)
+        return { ...student, classes: studentClassNames }
+      })
+      setStudents(studentsWithClasses)
+    } catch (error) {
+      console.error('Error loading data:', error)
+    }
   }, [])
 
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       
@@ -44,66 +79,11 @@ export default function TeacherStudentsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [router, loadData])
 
-  const loadData = async (userId: string) => {
-    try {
-      // Get teacher record
-      const { data: teacher } = await supabase
-        .from('teachers')
-        .select('id')
-        .eq('user_id', userId)
-        .single()
-
-      if (!teacher) return
-
-      // Load teacher's classes
-      const { data: teacherClasses } = await supabase
-        .from('classes')
-        .select('*')
-        .eq('teacher_id', teacher.id)
-
-      setClasses(teacherClasses || [])
-
-      // Load students from all classes
-      const classIds = (teacherClasses || []).map(c => c.id)
-      if (classIds.length === 0) return
-
-      const { data: enrollments } = await supabase
-        .from('class_enrollments')
-        .select('student_id, class_id')
-        .in('class_id', classIds)
-
-      if (!enrollments) return
-
-      // Get unique student IDs
-      const studentIds = Array.from(new Set(enrollments.map(e => e.student_id)))
-
-      // Load student details
-      const { data: studentsData } = await supabase
-        .from('students')
-        .select('*')
-        .in('id', studentIds)
-
-      // Map students with their classes
-      const studentsWithClasses = (studentsData || []).map(student => {
-        const studentEnrollments = enrollments.filter(e => e.student_id === student.id)
-        const studentClassIds = studentEnrollments.map(e => e.class_id)
-        const studentClassNames = (teacherClasses || [])
-          .filter(c => studentClassIds.includes(c.id))
-          .map(c => c.name)
-
-        return {
-          ...student,
-          classes: studentClassNames,
-        }
-      })
-
-      setStudents(studentsWithClasses)
-    } catch (error) {
-      console.error('Error loading data:', error)
-    }
-  }
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
 
   const filteredStudents = selectedClass === 'all' 
     ? students 
@@ -112,40 +92,12 @@ export default function TeacherStudentsPage() {
         return s.classes?.some(sc => classNames.includes(sc))
       })
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/auth/login')
-  }
-
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => router.push('/teacher')}
-                className="text-gray-600 hover:text-gray-900"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <h1 className="text-xl font-bold text-gray-900">My Students</h1>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg hover:bg-gray-100"
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div>
         <div className="mb-6">
           <div className="flex items-center gap-4 mb-4">
             <Users className="w-10 h-10 text-green-600" />
@@ -221,7 +173,6 @@ export default function TeacherStudentsPage() {
             </tbody>
           </table>
         </div>
-      </main>
     </div>
   )
 }

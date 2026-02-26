@@ -30,10 +30,11 @@ export default function AdminSubjectsPage() {
 
   const [showSubjectModal, setShowSubjectModal] = useState(false)
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null)
-  const [subjectForm, setSubjectForm] = useState({ name: '', code: '' })
+  const [subjectForm, setSubjectForm] = useState({ name: '', code: '', departments: [] as string[] })
 
   const [showAssignModal, setShowAssignModal] = useState(false)
   const [assignForm, setAssignForm] = useState({ class_id: '', subject_id: '', teacher_id: '' })
+  const [assignClasses, setAssignClasses] = useState<string[]>([])
 
   useEffect(() => {
     ;(async () => {
@@ -96,6 +97,23 @@ export default function AdminSubjectsPage() {
     }
   }
 
+  const SENIOR_LEVELS = ['SS1', 'SS2', 'SS3']
+
+  const filteredSubjectsForAssign = useMemo(() => {
+    // No department-based filtering; show all subjects
+    return subjects
+  }, [subjects])
+
+  const assignedClassCategory = useMemo(() => {
+    if (!assignForm.class_id) return null
+    const cls = classes.find((c) => c.id === assignForm.class_id)
+    if (!cls) return null
+    const u = (cls.class_level || '').toUpperCase()
+    if (u.startsWith('JSS')) return 'Junior'
+    if (u.startsWith('SS')) return 'Senior'
+    return null
+  }, [assignForm.class_id, classes])
+
   const assignmentRows = useMemo(() => {
     const classById = new Map(classes.map((c) => [c.id, c]))
     const teacherById = new Map(teachers.map((t) => [t.id, t]))
@@ -107,33 +125,87 @@ export default function AdminSubjectsPage() {
       const subject = subjectById.get(a.subject_id)
       return {
         ...a,
-        class_name: cls ? `${cls.name}${cls.class_level ? ` (${cls.class_level})` : ''}${cls.department ? ` - ${cls.department}` : ''}` : 'Unknown class',
+        class_name: cls ? `${cls.class_level || cls.name}` : 'Unknown class',
         teacher_name: teacher?.full_name || 'Unknown teacher',
         subject_name: subject?.name || 'Unknown subject',
       }
     })
   }, [assignments, classes, teachers, subjects])
 
+  const overviewRows = useMemo(() => {
+    const classById = new Map(classes.map((c) => [c.id, c]))
+    const subjectById = new Map(subjects.map((s) => [s.id, s]))
+    const teacherById = new Map(teachers.map((t) => [t.id, t.full_name]))
+    const rows: Record<string, { subject: string; junior: string[]; senior: string[]; teachers: Set<string>; teacherCounts: Map<string, number> }> = {}
+    assignments.forEach((a) => {
+      const sub = subjectById.get(a.subject_id)
+      if (!sub) return
+      const key = a.subject_id
+      if (!rows[key]) rows[key] = { subject: sub.name, junior: [], senior: [], teachers: new Set(), teacherCounts: new Map() }
+      const cls = classById.get(a.class_id)
+      const tname = teacherById.get(a.teacher_id)
+      if (tname) {
+        rows[key].teachers.add(tname)
+        rows[key].teacherCounts.set(tname, (rows[key].teacherCounts.get(tname) || 0) + 1)
+      }
+      if (cls) {
+        const label = `${cls.name}${cls.class_level ? ` (${cls.class_level})` : ''}`
+        const lvl = (cls.class_level || cls.name || '').toUpperCase()
+        if (lvl.startsWith('JSS')) rows[key].junior.push(label)
+        else if (lvl.startsWith('SS')) rows[key].senior.push(label)
+        else rows[key].junior.push(label)
+      }
+    })
+    return Object.values(rows).map((r) => ({
+      subject: r.subject,
+      junior: Array.from(new Set(r.junior)).sort().join('; '),
+      senior: Array.from(new Set(r.senior)).sort().join('; '),
+      teachers: Array.from(r.teachers).sort().join('; '),
+      teacher_counts: Array.from(r.teacherCounts.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([name, count]) => `${name}: ${count}`)
+        .join('; ')
+    }))
+  }, [assignments, classes, subjects, teachers])
+
   async function handleSaveSubject() {
     const name = subjectForm.name.trim()
     const code = subjectForm.code.trim()
+    const departments = subjectForm.departments && subjectForm.departments.length ? subjectForm.departments : null
     if (!name) return
 
     try {
       if (editingSubject) {
-        const { error } = await supabase
+        const { error, status } = await supabase
           .from('subjects')
-          .update({ name, code: code || null })
+          .update({ name, code: code || null, departments })
           .eq('id', editingSubject.id)
-        if (error) throw error
+        if (error) {
+          const msg = String(error.message || '')
+          const needsFallback = msg.includes("schema cache") || msg.toLowerCase().includes("departments") || status === 400
+          if (!needsFallback) throw error
+          const { error: err2 } = await supabase
+            .from('subjects')
+            .update({ name, code: code || null, department: departments ? departments.join(';') : null })
+            .eq('id', editingSubject.id)
+          if (err2) throw err2
+        }
       } else {
-        const { error } = await supabase.from('subjects').insert({ name, code: code || null })
-        if (error) throw error
+        const res = await supabase.from('subjects').insert({ name, code: code || null, departments })
+        if (res.error) {
+          const msg = String(res.error.message || '')
+          const needsFallback = msg.includes("schema cache") || msg.toLowerCase().includes("departments")
+          if (!needsFallback) throw res.error
+          const { error: err2 } = await supabase
+            .from('subjects')
+            .insert({ name, code: code || null, department: departments ? departments.join(';') : null })
+          if (err2) throw err2
+        }
       }
 
       setShowSubjectModal(false)
       setEditingSubject(null)
-      setSubjectForm({ name: '', code: '' })
+      setSubjectForm({ name: '', code: '', departments: [] })
       await loadSubjects()
     } catch (e: any) {
       alert(e?.message || 'Failed to save subject')
@@ -154,19 +226,25 @@ export default function AdminSubjectsPage() {
   }
 
   async function handleAssignTeacher() {
-    if (!assignForm.class_id || !assignForm.subject_id || !assignForm.teacher_id) return
+    if (!assignForm.subject_id || !assignForm.teacher_id) return
+    const targetClasses = Array.from(
+      new Set([assignForm.class_id, ...assignClasses].filter(Boolean))
+    )
+    if (targetClasses.length === 0) return
 
     try {
-      // Unique per (class_id, subject_id) so a class has one teacher per subject
-      const { error } = await supabase.from('class_subject_teachers').upsert({
-        class_id: assignForm.class_id,
-        subject_id: assignForm.subject_id,
-        teacher_id: assignForm.teacher_id,
-      })
-      if (error) throw error
+      for (const cid of targetClasses) {
+        const { error } = await supabase.from('class_subject_teachers').upsert({
+          class_id: cid,
+          subject_id: assignForm.subject_id,
+          teacher_id: assignForm.teacher_id,
+        })
+        if (error) throw error
+      }
 
       setShowAssignModal(false)
       setAssignForm({ class_id: '', subject_id: '', teacher_id: '' })
+      setAssignClasses([])
       await loadAssignments()
     } catch (e: any) {
       alert(e?.message || 'Failed to assign teacher')
@@ -199,6 +277,7 @@ export default function AdminSubjectsPage() {
           <button
             onClick={() => {
               setAssignForm({ class_id: '', subject_id: '', teacher_id: '' })
+              setAssignClasses([])
               setShowAssignModal(true)
             }}
             className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700"
@@ -209,7 +288,7 @@ export default function AdminSubjectsPage() {
           <button
             onClick={() => {
               setEditingSubject(null)
-              setSubjectForm({ name: '', code: '' })
+              setSubjectForm({ name: '', code: '', departments: [] })
               setShowSubjectModal(true)
             }}
             className="flex items-center gap-2 bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-black"
@@ -220,7 +299,7 @@ export default function AdminSubjectsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6">
         {/* Subjects list */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="p-4 border-b">
@@ -232,14 +311,15 @@ export default function AdminSubjectsPage() {
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Department</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {subjects.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="px-6 py-10 text-center text-gray-500">
-                    No subjects yet. Click “Add Subject”.
+                  <td colSpan={4} className="px-6 py-10 text-center text-gray-500">
+                    No subjects yet. Click "Add Subject".
                   </td>
                 </tr>
               ) : (
@@ -251,12 +331,37 @@ export default function AdminSubjectsPage() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-500">{s.code || '—'}</div>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {(() => {
+                        const arr = ((s as any).departments as string[] | null | undefined)
+                          ?? ((s as any).department
+                            ? String((s as any).department).split(/[;,]/).map((x) => x.trim()).filter(Boolean)
+                            : null)
+                        if (!arr || arr.length === 0) return <span className="text-xs text-gray-400">Core</span>
+                        const tokens = arr
+                        return (
+                          <div className="flex flex-wrap gap-1">
+                            {tokens.map((tok: string) => (
+                              <span key={tok} className={`px-2 py-0.5 text-xs rounded-full font-medium ${
+                                tok === 'Science' ? 'bg-blue-100 text-blue-700' :
+                                tok === 'Humanities' ? 'bg-yellow-100 text-yellow-700' :
+                                'bg-purple-100 text-purple-700'
+                              }`}>{tok}</span>
+                            ))}
+                          </div>
+                        )
+                      })()}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right">
                       <div className="flex justify-end gap-2">
                         <button
                           onClick={() => {
                             setEditingSubject(s)
-                            setSubjectForm({ name: s.name, code: s.code || '' })
+                            const deps = ((s as any).departments as string[] | null | undefined)
+                              ?? ((s as any).department
+                                ? String((s as any).department).split(/[;,]/).map((x) => x.trim()).filter(Boolean)
+                                : [])
+                            setSubjectForm({ name: s.name, code: s.code || '', departments: deps })
                             setShowSubjectModal(true)
                           }}
                           className="text-blue-600 hover:text-blue-900"
@@ -280,55 +385,45 @@ export default function AdminSubjectsPage() {
           </table>
         </div>
 
-        {/* Assignments list */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="p-4 border-b">
-            <h3 className="text-lg font-semibold">Class Subject Links</h3>
-            <p className="text-sm text-gray-600">Assign a teacher to teach a subject in a class.</p>
-          </div>
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Class</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Teacher</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {assignmentRows.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-6 py-10 text-center text-gray-500">
-                    No links yet. Click “Link Teacher”.
-                  </td>
-                </tr>
-              ) : (
-                assignmentRows.map((a: any) => (
-                  <tr key={a.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-gray-900">{a.class_name}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm text-gray-900">{a.subject_name}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm text-gray-900">{a.teacher_name}</div>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => handleDeleteAssignment(a.id)}
-                        className="text-red-600 hover:text-red-900"
-                        title="Remove link"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+      </div>
+
+      <div className="mt-6 bg-white rounded-lg shadow overflow-hidden">
+        <div className="p-4 border-b">
+          <h3 className="text-lg font-semibold">Subject Overview</h3>
+          <p className="text-sm text-gray-600">Quick view with teachers and per‑teacher totals.</p>
         </div>
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Junior Classes</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Senior Classes</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Teachers</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Teacher Totals</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {overviewRows.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-6 py-10 text-center text-gray-500">
+                  No data yet.
+                </td>
+              </tr>
+            ) : (
+              overviewRows.map((r, idx) => (
+                <tr key={idx} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm font-medium text-gray-900">{r.subject}</div>
+                  </td>
+                  <td className="px-6 py-4"><div className="text-sm text-gray-700">{r.junior || '—'}</div></td>
+                  <td className="px-6 py-4"><div className="text-sm text-gray-700">{r.senior || '—'}</div></td>
+                  <td className="px-6 py-4"><div className="text-sm text-gray-700">{r.teachers || '—'}</div></td>
+                  <td className="px-6 py-4"><div className="text-sm text-gray-700">{(r as any).teacher_counts || '—'}</div></td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
 
       {/* Subject modal */}
@@ -359,6 +454,38 @@ export default function AdminSubjectsPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                   placeholder="e.g., MTH"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Departments <span className="text-gray-400 font-normal">(leave empty for core/all students)</span></label>
+                <div className="border rounded-lg p-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    {['Science', 'Humanities', 'Arts'].map((dep) => {
+                      const checked = subjectForm.departments.includes(dep)
+                      return (
+                        <label key={dep} className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              setSubjectForm((prev) => {
+                                const set = new Set(prev.departments)
+                                if (e.target.checked) set.add(dep)
+                                else set.delete(dep)
+                                return { ...prev, departments: Array.from(set) }
+                              })
+                            }}
+                          />
+                          <span>{dep}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  {subjectForm.departments.length > 1 && (
+                    <div className="mt-2 text-xs text-gray-600">
+                      Selected: {subjectForm.departments.join(', ')}
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex justify-end gap-2 pt-4">
                 <button onClick={() => setShowSubjectModal(false)} className="px-4 py-2 border rounded-lg">
@@ -394,26 +521,92 @@ export default function AdminSubjectsPage() {
                   <option value="">Select class</option>
                   {classes.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name}
-                      {c.class_level ? ` (${c.class_level})` : ''}
-                      {c.department ? ` - ${c.department}` : ''}
+                      {(c.class_level && c.class_level.trim()) ? c.class_level : c.name}
                     </option>
                   ))}
                 </select>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ids = classes
+                        .filter((c) => ((c.class_level || c.name || '').toUpperCase().startsWith('JSS')))
+                        .map((c) => c.id)
+                      setAssignClasses(Array.from(new Set([...assignClasses, ...ids].filter((id) => id !== assignForm.class_id))))
+                    }}
+                    className="px-2.5 py-1 text-xs border rounded-lg hover:bg-gray-50"
+                  >
+                    Select all junior
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ids = classes
+                        .filter((c) => ((c.class_level || c.name || '').toUpperCase().startsWith('SS')))
+                        .map((c) => c.id)
+                      setAssignClasses(Array.from(new Set([...assignClasses, ...ids].filter((id) => id !== assignForm.class_id))))
+                    }}
+                    className="px-2.5 py-1 text-xs border rounded-lg hover:bg-gray-50"
+                  >
+                    Select all senior
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssignClasses([])}
+                    className="px-2.5 py-1 text-xs border rounded-lg hover:bg-gray-50"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Also assign to these classes (optional)
+                </label>
+                <div className="border rounded-lg p-3 max-h-40 overflow-y-auto">
+                  {classes
+                    .filter((c) => c.id !== assignForm.class_id)
+                    .map((c) => {
+                      const label = `${c.name}${c.class_level ? ` (${c.class_level})` : ''}`
+                      const checked = assignClasses.includes(c.id)
+                      return (
+                        <label key={c.id} className="flex items-center gap-2 py-1">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setAssignClasses((prev) => Array.from(new Set(prev.concat(c.id))))
+                              } else {
+                                setAssignClasses((prev) => prev.filter((id) => id !== c.id))
+                              }
+                            }}
+                          />
+                          <span className="text-sm">{label}</span>
+                        </label>
+                      )
+                    })}
+                </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Subject *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Subject *
+                  {assignedClassCategory && (
+                    <span className="ml-2 text-xs text-indigo-600 font-normal">{assignedClassCategory} class</span>
+                  )}
+                </label>
                 <select
                   value={assignForm.subject_id}
                   onChange={(e) => setAssignForm({ ...assignForm, subject_id: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 >
                   <option value="">Select subject</option>
-                  {subjects.map((s) => (
+                  {filteredSubjectsForAssign.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                       {s.code ? ` (${s.code})` : ''}
+                      {Array.isArray((s as any).departments) && (s as any).departments.length ? ` — ${(s as any).departments.join(', ')}` : ''}
                     </option>
                   ))}
                 </select>

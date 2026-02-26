@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers'
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
+import { createServerSupabaseClient } from './supabase/server'
 import { NextResponse } from 'next/server'
 import type { UserRole } from '@/types/database'
 
@@ -14,13 +13,13 @@ export async function requireApiRole(
   | { authorized: false; response: NextResponse }
 > {
   try {
-    const supabase = createServerComponentClient({ cookies })
+    const supabase = await createServerSupabaseClient()
 
     const {
-      data: { session },
-    } = await supabase.auth.getSession()
+      data: { user },
+    } = await supabase.auth.getUser()
 
-    if (!session) {
+    if (!user) {
       return {
         authorized: false,
         response: NextResponse.json(
@@ -33,7 +32,7 @@ export async function requireApiRole(
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
-      .eq('id', session.user.id)
+      .eq('id', user.id)
       .single()
 
     const role = profile?.role as UserRole | undefined
@@ -48,7 +47,7 @@ export async function requireApiRole(
       }
     }
 
-    return { authorized: true, userId: session.user.id, role }
+    return { authorized: true, userId: user.id, role }
   } catch {
     return {
       authorized: false,

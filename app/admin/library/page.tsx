@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Library, Plus, Book, Search, User, X } from 'lucide-react'
@@ -13,11 +13,20 @@ export default function AdminLibraryPage() {
   const [showModal, setShowModal] = useState(false)
   const [bookForm, setBookForm] = useState({ title: '', author: '', isbn: '', available: true })
 
-  useEffect(() => {
-    checkAuth()
+  const loadBooks = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('books')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      setBooks(data || [])
+    } catch (error) {
+      console.error('Error loading books:', error)
+    }
   }, [])
 
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
@@ -30,21 +39,11 @@ export default function AdminLibraryPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [loadBooks])
 
-  const loadBooks = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('books')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      if (error) throw error
-      setBooks(data || [])
-    } catch (error) {
-      console.error('Error loading books:', error)
-    }
-  }
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
 
   const handleCreateBook = async () => {
     try {

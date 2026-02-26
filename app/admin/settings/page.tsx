@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { Settings, Save, Bell, Shield, Database, Check } from 'lucide-react'
+import { Settings as SettingsIcon, Save, Bell, Shield, Database, Check, Download, Upload } from 'lucide-react'
 
 export default function AdminSettingsPage() {
   const router = useRouter()
@@ -90,7 +90,7 @@ export default function AdminSettingsPage() {
   return (
     <div>
       <div className="flex items-center gap-4 mb-6">
-        <Settings className="w-10 h-10 text-gray-600" />
+        <SettingsIcon className="w-10 h-10 text-gray-600" />
         <h2 className="text-3xl font-bold text-gray-900">Settings</h2>
       </div>
 
@@ -160,6 +160,66 @@ export default function AdminSettingsPage() {
               />
               <span className="text-gray-700">Require parent approval for enrollment</span>
             </label>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Database className="w-6 h-6 text-purple-600" />
+            <h3 className="text-xl font-semibold">Backup & Restore</h3>
+          </div>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">Download a JSON backup of master data or restore from a previous backup. User accounts and passwords are not included.</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <a
+                href="/api/admin/backup/download"
+                className="inline-flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50"
+              >
+                <Download className="w-5 h-5" />
+                Download Backup (JSON)
+              </a>
+              <a
+                href="/api/admin/backup/full-download"
+                className="inline-flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50"
+                title="Includes users list and relational data"
+              >
+                <Download className="w-5 h-5" />
+                Full Backup (Advanced)
+              </a>
+              <label className="inline-flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer hover:bg-gray-50">
+                <Upload className="w-5 h-5" />
+                <span>Restore From File</span>
+                <input
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0]
+                    if (!f) return
+                    try {
+                      const text = await f.text()
+                      const json = JSON.parse(text)
+                      const endpoint = json?.users ? '/api/admin/backup/full-restore' : '/api/admin/backup/restore'
+                      const res = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(json),
+                      })
+                      const out = await res.json()
+                      if (!res.ok) {
+                        alert(out.error || 'Restore failed')
+                        return
+                      }
+                      alert('Restore completed')
+                    } catch (err: any) {
+                      alert(err?.message || 'Invalid file')
+                    } finally {
+                      e.currentTarget.value = ''
+                    }
+                  }}
+                />
+              </label>
+            </div>
           </div>
         </div>
 
