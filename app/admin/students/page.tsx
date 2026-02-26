@@ -702,18 +702,6 @@ export default function AdminStudentsPage() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900">{student.full_name}</div>
-                    {(() => {
-                      const cls = (student.classes && student.classes[0]) ? (student.classes[0] as any) : null
-                      const lvl = String(cls?.class_level || '').toUpperCase()
-                      const dep = cls?.department || (lvl.startsWith('JSS') ? 'General' : '')
-                      if (!dep) return null
-                      const badgeClass =
-                        dep === 'Science' ? 'bg-blue-100 text-blue-700' :
-                        dep === 'Humanities' ? 'bg-yellow-100 text-yellow-700' :
-                        dep === 'Arts' ? 'bg-purple-100 text-purple-700' :
-                        'bg-gray-100 text-gray-700'
-                      return <span className={`mt-1 inline-block px-2 py-0.5 text-xs rounded-full font-medium ${badgeClass}`}>{dep}</span>
-                    })()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-gray-500">{student.email || 'N/A'}</div>

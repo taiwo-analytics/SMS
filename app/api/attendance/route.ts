@@ -140,16 +140,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing required fields: class_id, date, entries[]' }, { status: 400 })
     }
 
-    // Verify teacher owns this class
+    // Verify teacher is the class teacher (check both class_teacher_id and legacy teacher_id)
     const { data: classRecord } = await supabase
       .from('classes')
-      .select('id')
+      .select('id, class_teacher_id, teacher_id')
       .eq('id', class_id)
-      .eq('teacher_id', teacher.id)
       .single()
 
-    if (!classRecord) {
-      return NextResponse.json({ error: 'You can only take attendance for your own classes' }, { status: 403 })
+    const isClassTeacher =
+      classRecord?.class_teacher_id === teacher.id ||
+      classRecord?.teacher_id === teacher.id
+
+    if (!classRecord || !isClassTeacher) {
+      return NextResponse.json({ error: 'Only the class teacher can take attendance for this class' }, { status: 403 })
     }
 
     // Build upsert rows

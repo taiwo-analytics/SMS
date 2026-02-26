@@ -46,6 +46,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     { name: 'Academics', href: '/admin/academics', icon: Calendar },
     { name: 'Timetable', href: '/admin/timetable', icon: Clock },
     { name: 'Broadsheet', href: '/admin/results/broadsheet', icon: BarChart3 },
+    { name: 'Attendance', href: '/admin/attendance', icon: UserCheck },
     { name: 'Messages', href: '/admin/messages', icon: MessageSquare },
     { name: 'Library', href: '/admin/library', icon: Library },
     { name: 'Inventory', href: '/admin/inventory', icon: Package },
