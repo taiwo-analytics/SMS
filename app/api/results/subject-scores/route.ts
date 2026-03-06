@@ -90,22 +90,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Exam score must be between 0 and 60' }, { status: 400 })
   }
 
-  // Access check
-  if (caller.role === 'teacher') {
-    if (!caller.teacherId) return NextResponse.json({ error: 'Teacher record not found' }, { status: 403 })
-    const { data: cst } = await supabase
-      .from('class_subject_teachers')
-      .select('id')
-      .eq('class_id', class_id)
-      .eq('subject_id', subject_id)
-      .eq('teacher_id', caller.teacherId)
-      .single()
-    if (!cst) return NextResponse.json({ error: 'Forbidden – not your subject' }, { status: 403 })
-  } else if (caller.role !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  // Access check — only the assigned subject teacher can record scores
+  if (caller.role !== 'teacher' || !caller.teacherId) {
+    return NextResponse.json({ error: 'Only assigned subject teachers can record scores' }, { status: 403 })
   }
+  const { data: cst } = await supabase
+    .from('class_subject_teachers')
+    .select('id')
+    .eq('class_id', class_id)
+    .eq('subject_id', subject_id)
+    .eq('teacher_id', caller.teacherId)
+    .single()
+  if (!cst) return NextResponse.json({ error: 'Forbidden – not your subject' }, { status: 403 })
 
-  const teacherId = caller.role === 'teacher' ? caller.teacherId : (body.teacher_id || null)
+  const teacherId = caller.teacherId
 
   const { data, error } = await supabase
     .from('subject_scores')

@@ -3,8 +3,11 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { Shield, GraduationCap, User, BookOpen, Users, TrendingUp, Calendar, Clock, MapPin } from 'lucide-react'
+import { Shield, GraduationCap, User, BookOpen, Users, Calendar, Clock, MapPin, BarChart3 } from 'lucide-react'
 import { Event } from '@/types/events'
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell,
+} from 'recharts'
 
 export default function AdminDashboard() {
   const router = useRouter()
@@ -16,6 +19,18 @@ export default function AdminDashboard() {
     parents: 0,
   })
   const [upcomingEvents, setUpcomingEvents] = useState<Event[]>([])
+  const [attendanceView, setAttendanceView] = useState<'day' | 'week' | 'month'>('week')
+  const [attendanceClassId, setAttendanceClassId] = useState<string>('')
+  const [attendanceData, setAttendanceData] = useState<{
+    overall_rate: number
+    total_records: number
+    by_class: { class_id: string; class_name: string; present: number; absent: number; late: number; total: number; attendance_rate: number }[]
+    trend: { date: string; present: number; absent: number; late: number; total: number; attendance_rate: number }[]
+    classes: { id: string; name: string }[]
+    from: string
+    to: string
+  } | null>(null)
+  const [attendanceLoading, setAttendanceLoading] = useState(false)
 
   useEffect(() => {
     checkAuth()
@@ -25,8 +40,13 @@ export default function AdminDashboard() {
     if (!loading) {
       loadStats()
       loadUpcomingEvents()
+      loadAttendanceSummary()
     }
   }, [loading])
+
+  useEffect(() => {
+    if (!loading) loadAttendanceSummary()
+  }, [attendanceView, attendanceClassId])
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -115,6 +135,22 @@ export default function AdminDashboard() {
       })
     } catch (error) {
       console.error('Error loading stats:', error)
+    }
+  }
+
+  const loadAttendanceSummary = async () => {
+    setAttendanceLoading(true)
+    try {
+      const params = new URLSearchParams({ view: attendanceView })
+      if (attendanceClassId) params.set('class_id', attendanceClassId)
+      const res = await fetch(`/api/admin/attendance/summary?${params}`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed to load attendance')
+      setAttendanceData(json)
+    } catch (error) {
+      console.error('Error loading attendance summary:', error)
+    } finally {
+      setAttendanceLoading(false)
     }
   }
 
@@ -314,43 +350,159 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div
-          onClick={() => router.push('/admin/teachers')}
-          className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-blue-500"
-        >
-          <GraduationCap className="w-8 h-8 text-blue-600 mb-3" />
-          <h3 className="text-lg font-semibold mb-1">Teachers</h3>
-          <p className="text-sm text-gray-600">Manage teacher accounts</p>
+      {/* Attendance Overview Chart */}
+      <div className="bg-white rounded-lg shadow p-6 mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-6 h-6 text-blue-600" />
+            <h3 className="text-xl font-semibold text-gray-900">Attendance Overview</h3>
+            {attendanceData && (
+              <span className={`ml-3 px-3 py-1 text-sm font-semibold rounded-full ${
+                attendanceData.overall_rate >= 80 ? 'bg-green-100 text-green-700' :
+                attendanceData.overall_rate >= 60 ? 'bg-yellow-100 text-yellow-700' :
+                'bg-red-100 text-red-700'
+              }`}>
+                {attendanceData.overall_rate}% overall
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={attendanceClassId}
+              onChange={(e) => setAttendanceClassId(e.target.value)}
+              className="text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">All Classes</option>
+              {(attendanceData?.classes || []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              {(['day', 'week', 'month'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setAttendanceView(v)}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    attendanceView === v
+                      ? 'bg-white text-blue-600 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  {v === 'day' ? 'Today' : v === 'week' ? 'This Week' : 'This Month'}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
-        <div
-          onClick={() => router.push('/admin/students')}
-          className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-green-500"
-        >
-          <User className="w-8 h-8 text-green-600 mb-3" />
-          <h3 className="text-lg font-semibold mb-1">Students</h3>
-          <p className="text-sm text-gray-600">Manage student records</p>
-        </div>
+        {attendanceLoading ? (
+          <div className="flex items-center justify-center py-16 text-gray-500">Loading attendance data...</div>
+        ) : !attendanceData || attendanceData.total_records === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-gray-500">
+            <BarChart3 className="w-12 h-12 text-gray-300 mb-3" />
+            <p className="text-lg font-medium">No attendance data</p>
+            <p className="text-sm">No records found for this period. Attendance is recorded by class teachers.</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Per-class bar chart */}
+            {!attendanceClassId && attendanceData.by_class.length >= 1 && (
+              <div>
+                <p className="text-sm font-medium text-gray-600 mb-3">Attendance Rate by Class</p>
+                <ResponsiveContainer width="100%" height={Math.max(250, attendanceData.by_class.length * 45)}>
+                  <BarChart
+                    data={attendanceData.by_class.sort((a, b) => b.attendance_rate - a.attendance_rate)}
+                    layout="vertical"
+                    margin={{ top: 0, right: 30, left: 20, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                    <YAxis type="category" dataKey="class_name" width={120} tick={{ fontSize: 13 }} />
+                    <Tooltip
+                      formatter={(value: any, name: any) => {
+                        if (name === 'attendance_rate') return [`${value}%`, 'Rate']
+                        return [value, name]
+                      }}
+                      contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }}
+                    />
+                    <Bar dataKey="attendance_rate" name="Attendance Rate" radius={[0, 6, 6, 0]} maxBarSize={32}>
+                      {attendanceData.by_class
+                        .sort((a, b) => b.attendance_rate - a.attendance_rate)
+                        .map((entry, index) => (
+                          <Cell
+                            key={index}
+                            fill={entry.attendance_rate >= 80 ? '#22c55e' : entry.attendance_rate >= 60 ? '#eab308' : '#ef4444'}
+                          />
+                        ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
 
-        <div
-          onClick={() => router.push('/admin/classes')}
-          className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-purple-500"
-        >
-          <BookOpen className="w-8 h-8 text-purple-600 mb-3" />
-          <h3 className="text-lg font-semibold mb-1">Classes</h3>
-          <p className="text-sm text-gray-600">Create and manage classes</p>
-        </div>
+            {/* Daily trend (week/month views) */}
+            {attendanceData.trend.length >= 1 && (
+              <div>
+                <p className="text-sm font-medium text-gray-600 mb-3">Daily Breakdown</p>
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={attendanceData.trend} margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={(d) => {
+                        const dt = new Date(d + 'T00:00:00')
+                        return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                      }}
+                      tick={{ fontSize: 12 }}
+                    />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip
+                      labelFormatter={(d) => {
+                        const dt = new Date(d + 'T00:00:00')
+                        return dt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+                      }}
+                      contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }}
+                    />
+                    <Legend />
+                    <Bar dataKey="present" name="Present" fill="#22c55e" stackId="a" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="late" name="Late" fill="#eab308" stackId="a" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="absent" name="Absent" fill="#ef4444" stackId="a" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
 
-        <div
-          onClick={() => router.push('/admin/enrollments')}
-          className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-orange-500"
-        >
-          <Users className="w-8 h-8 text-orange-600 mb-3" />
-          <h3 className="text-lg font-semibold mb-1">Enrollments</h3>
-          <p className="text-sm text-gray-600">Manage class enrollments</p>
-        </div>
+            {/* Summary stats row */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2">
+              <div className="p-3 bg-green-50 rounded-lg text-center">
+                <p className="text-2xl font-bold text-green-600">
+                  {attendanceData.by_class.reduce((s, c) => s + c.present, 0)}
+                </p>
+                <p className="text-xs text-gray-600">Present</p>
+              </div>
+              <div className="p-3 bg-yellow-50 rounded-lg text-center">
+                <p className="text-2xl font-bold text-yellow-600">
+                  {attendanceData.by_class.reduce((s, c) => s + c.late, 0)}
+                </p>
+                <p className="text-xs text-gray-600">Late</p>
+              </div>
+              <div className="p-3 bg-red-50 rounded-lg text-center">
+                <p className="text-2xl font-bold text-red-600">
+                  {attendanceData.by_class.reduce((s, c) => s + c.absent, 0)}
+                </p>
+                <p className="text-xs text-gray-600">Absent</p>
+              </div>
+              <div className="p-3 bg-blue-50 rounded-lg text-center">
+                <p className="text-2xl font-bold text-blue-600">{attendanceData.total_records}</p>
+                <p className="text-xs text-gray-600">Total Records</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-400">
+              Showing {attendanceData.from} to {attendanceData.to}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Upcoming Events */}
@@ -409,31 +561,6 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      {/* Quick Stats */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <TrendingUp className="w-6 h-6 text-gray-600" />
-          <h3 className="text-xl font-semibold text-gray-900">Quick Stats</h3>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="p-4 bg-blue-50 rounded-lg">
-            <p className="text-sm text-gray-600 mb-1">Total Teachers</p>
-            <p className="text-2xl font-bold text-blue-600">{stats.teachers}</p>
-          </div>
-          <div className="p-4 bg-green-50 rounded-lg">
-            <p className="text-sm text-gray-600 mb-1">Total Students</p>
-            <p className="text-2xl font-bold text-green-600">{stats.students}</p>
-          </div>
-          <div className="p-4 bg-purple-50 rounded-lg">
-            <p className="text-sm text-gray-600 mb-1">Active Classes</p>
-            <p className="text-2xl font-bold text-purple-600">{stats.classes}</p>
-          </div>
-          <div className="p-4 bg-orange-50 rounded-lg">
-            <p className="text-sm text-gray-600 mb-1">Registered Parents</p>
-            <p className="text-2xl font-bold text-orange-600">{stats.parents}</p>
-          </div>
-        </div>
-      </div>
     </div>
   )
 }

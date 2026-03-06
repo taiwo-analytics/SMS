@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { UserCheck, ArrowLeft, Users, Check, X, Clock, ShieldCheck } from 'lucide-react'
+import { UserCheck, ArrowLeft, Users, Check, X, Clock } from 'lucide-react'
 import { Attendance, Student, Class, AttendanceStatus } from '@/types/database'
 
 export default function ParentAttendancePage() {
@@ -85,18 +85,17 @@ export default function ParentAttendancePage() {
     ? records
     : records.filter(r => r.student_id === selectedChild)
 
-  const statusIcon: Record<AttendanceStatus, { icon: typeof Check; color: string; label: string }> = {
+  const statusIcon: Record<Exclude<AttendanceStatus, never>, { icon: typeof Check; color: string; label: string }> = {
     present: { icon: Check, color: 'text-green-600', label: 'Present' },
     absent: { icon: X, color: 'text-red-600', label: 'Absent' },
     late: { icon: Clock, color: 'text-yellow-600', label: 'Late' },
-    excused: { icon: ShieldCheck, color: 'text-blue-600', label: 'Excused' },
   }
 
   // Stats per child
   const childStats = children.map(child => {
     const childRecords = records.filter(r => r.student_id === child.id)
     const total = childRecords.length
-    const present = childRecords.filter(r => r.status === 'present').length
+    const present = childRecords.filter(r => Array.isArray((r as any).statuses) && (r as any).statuses.includes('present')).length
     const rate = total > 0 ? ((present / total) * 100).toFixed(1) : null
     return { child, total, present, rate }
   }).filter(entry =>
@@ -213,8 +212,16 @@ export default function ParentAttendancePage() {
                 {filteredRecords.map((record) => {
                   const child = children.find(c => c.id === record.student_id)
                   const cls = classes.find(c => c.id === record.class_id)
-                  const cfg = statusIcon[record.status]
-                  const Icon = cfg.icon
+                  const arr = Array.isArray((record as any).statuses) ? (record as any).statuses as AttendanceStatus[] : []
+                  const isAbsent = arr.includes('absent')
+                  const isPresent = arr.includes('present')
+                  const isLate = arr.includes('late')
+                  const display =
+                    isAbsent ? { label: 'Absent', key: 'absent' as const } :
+                    (isPresent && isLate) ? { label: 'Present + Late', key: 'present' as const } :
+                    isPresent ? { label: 'Present', key: 'present' as const } :
+                    isLate ? { label: 'Late', key: 'late' as const } :
+                    null
                   return (
                     <tr key={record.id} className="hover:bg-gray-50">
                       {selectedChild === 'all' && (
@@ -230,10 +237,14 @@ export default function ParentAttendancePage() {
                         {cls?.subject && <div className="text-xs text-gray-500">{cls.subject}</div>}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1 text-sm font-medium ${cfg.color}`}>
-                          <Icon className="w-4 h-4" />
-                          {cfg.label}
-                        </span>
+                        {display ? (
+                          <span className={`inline-flex items-center gap-1 text-sm font-medium ${statusIcon[display.key].color}`}>
+                            {display.key === 'present' ? <Check className="w-4 h-4" /> : display.key === 'absent' ? <X className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                            {display.label}
+                          </span>
+                        ) : (
+                          <span className="text-sm text-gray-400">Unmarked</span>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm text-gray-500 max-w-xs truncate">{record.notes || '-'}</div>

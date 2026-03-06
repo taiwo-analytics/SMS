@@ -43,7 +43,7 @@ function LoginContent() {
           role === 'admin'
             ? '/admin'
             : role === 'teacher'
-            ? '/teacher/classes'
+            ? '/teacher'
             : role === 'student'
             ? '/student'
             : role === 'parent'

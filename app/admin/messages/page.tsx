@@ -40,17 +40,21 @@ export default function AdminMessagesPage() {
     reply_to: null as string | null,
   })
   const [selectedMessage, setSelectedMessage] = useState<MessageItem | null>(null)
+  const [adminUserId, setAdminUserId] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'inbox' | 'sent'>('inbox')
 
-  const loadMessages = useCallback(async () => {
+  const loadMessages = useCallback(async (currentUserId?: string) => {
     try {
       const { data, error } = await supabase
         .from('messages')
         .select('*')
         .order('created_at', { ascending: false })
       if (error) throw error
+      const uid = currentUserId
       const allMessages = (data || []).map((m: any) => ({
         ...m,
         date: new Date(m.created_at).toLocaleString(),
+        isMine: m.sender_id === uid,
       }))
       const parentMessages = allMessages.filter((m: any) => !m.reply_to)
       const replyMessages = allMessages.filter((m: any) => m.reply_to)
@@ -85,7 +89,7 @@ export default function AdminMessagesPage() {
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser()
       if (authError || !user) { setLoading(false); return }
-      await Promise.all([loadMessages(), loadTeachers()])
+      await Promise.all([loadMessages(user.id), loadTeachers()])
     } catch (error) {
       console.error('Error:', error)
     } finally {
@@ -93,15 +97,21 @@ export default function AdminMessagesPage() {
     }
   }, [loadMessages, loadTeachers])
 
-  useEffect(() => { checkAuth() }, [checkAuth])
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) setAdminUserId(user.id)
+    })
+    checkAuth()
+  }, [checkAuth])
 
   useEffect(() => {
+    if (!adminUserId) return
     const channel = supabase
       .channel('messages-admin-page')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, loadMessages)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => loadMessages(adminUserId))
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [loadMessages])
+  }, [loadMessages, adminUserId])
 
   const handleSendMessage = async () => {
     if (!newMessage.subject && !newMessage.content) return
@@ -190,7 +200,12 @@ export default function AdminMessagesPage() {
     return msg.recipient_role || 'all'
   }
 
-  const unreadCount = messages.filter(m => !m.is_read).length
+  // Inbox = messages received by admin (not sent by admin)
+  // Sent = messages sent by admin
+  const inboxMessages = messages.filter((m: any) => m.sender_id !== adminUserId)
+  const sentMessages = messages.filter((m: any) => m.sender_id === adminUserId)
+  const displayedMessages = activeTab === 'inbox' ? inboxMessages : sentMessages
+  const unreadCount = inboxMessages.filter(m => !m.is_read).length
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>
@@ -212,15 +227,28 @@ export default function AdminMessagesPage() {
         {/* Message List */}
         <div className="lg:col-span-2 space-y-4">
           <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold mb-4">Inbox</h3>
-            {messages.length === 0 ? (
+            <div className="flex items-center gap-2 mb-4 border-b pb-3">
+              <button
+                onClick={() => setActiveTab('inbox')}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${activeTab === 'inbox' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                Inbox {unreadCount > 0 && <span className="ml-1 bg-red-500 text-white text-xs rounded-full px-1.5">{unreadCount}</span>}
+              </button>
+              <button
+                onClick={() => setActiveTab('sent')}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${activeTab === 'sent' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                Sent
+              </button>
+            </div>
+            {displayedMessages.length === 0 ? (
               <div className="text-center py-12 text-gray-500">
                 <MessageSquare className="w-16 h-16 mx-auto mb-4 text-gray-400" />
                 <p>No messages yet</p>
               </div>
             ) : (
               <div className="space-y-3">
-                {messages.map((message) => (
+                {displayedMessages.map((message) => (
                   <div key={message.id}>
                     <div
                       onClick={() => handleSelectMessage(message)}

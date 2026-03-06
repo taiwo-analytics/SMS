@@ -133,40 +133,24 @@ export default function AdminSubjectsPage() {
   }, [assignments, classes, teachers, subjects])
 
   const overviewRows = useMemo(() => {
-    const classById = new Map(classes.map((c) => [c.id, c]))
     const subjectById = new Map(subjects.map((s) => [s.id, s]))
     const teacherById = new Map(teachers.map((t) => [t.id, t.full_name]))
-    const rows: Record<string, { subject: string; junior: string[]; senior: string[]; teachers: Set<string>; teacherCounts: Map<string, number> }> = {}
+    const rows: Record<string, { subject: string; teachers: Set<string>; total: number }> = {}
     assignments.forEach((a) => {
       const sub = subjectById.get(a.subject_id)
       if (!sub) return
       const key = a.subject_id
-      if (!rows[key]) rows[key] = { subject: sub.name, junior: [], senior: [], teachers: new Set(), teacherCounts: new Map() }
-      const cls = classById.get(a.class_id)
+      if (!rows[key]) rows[key] = { subject: sub.name, teachers: new Set(), total: 0 }
       const tname = teacherById.get(a.teacher_id)
-      if (tname) {
-        rows[key].teachers.add(tname)
-        rows[key].teacherCounts.set(tname, (rows[key].teacherCounts.get(tname) || 0) + 1)
-      }
-      if (cls) {
-        const label = `${cls.name}${cls.class_level ? ` (${cls.class_level})` : ''}`
-        const lvl = (cls.class_level || cls.name || '').toUpperCase()
-        if (lvl.startsWith('JSS')) rows[key].junior.push(label)
-        else if (lvl.startsWith('SS')) rows[key].senior.push(label)
-        else rows[key].junior.push(label)
-      }
+      if (tname) rows[key].teachers.add(tname)
+      rows[key].total += 1
     })
     return Object.values(rows).map((r) => ({
       subject: r.subject,
-      junior: Array.from(new Set(r.junior)).sort().join('; '),
-      senior: Array.from(new Set(r.senior)).sort().join('; '),
       teachers: Array.from(r.teachers).sort().join('; '),
-      teacher_counts: Array.from(r.teacherCounts.entries())
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([name, count]) => `${name}: ${count}`)
-        .join('; ')
+      total: r.total,
     }))
-  }, [assignments, classes, subjects, teachers])
+  }, [assignments, subjects, teachers])
 
   async function handleSaveSubject() {
     const name = subjectForm.name.trim()
@@ -299,113 +283,25 @@ export default function AdminSubjectsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6">
-        {/* Subjects list */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="p-4 border-b">
-            <h3 className="text-lg font-semibold">All Subjects</h3>
-            <p className="text-sm text-gray-600">Create subjects used across classes, then link teachers.</p>
-          </div>
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Department</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {subjects.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-6 py-10 text-center text-gray-500">
-                    No subjects yet. Click "Add Subject".
-                  </td>
-                </tr>
-              ) : (
-                subjects.map((s) => (
-                  <tr key={s.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{s.name}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-500">{s.code || '—'}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {(() => {
-                        const arr = ((s as any).departments as string[] | null | undefined)
-                          ?? ((s as any).department
-                            ? String((s as any).department).split(/[;,]/).map((x) => x.trim()).filter(Boolean)
-                            : null)
-                        if (!arr || arr.length === 0) return <span className="text-xs text-gray-400">Core</span>
-                        const tokens = arr
-                        return (
-                          <div className="flex flex-wrap gap-1">
-                            {tokens.map((tok: string) => (
-                              <span key={tok} className={`px-2 py-0.5 text-xs rounded-full font-medium ${
-                                tok === 'Science' ? 'bg-blue-100 text-blue-700' :
-                                tok === 'Humanities' ? 'bg-yellow-100 text-yellow-700' :
-                                'bg-purple-100 text-purple-700'
-                              }`}>{tok}</span>
-                            ))}
-                          </div>
-                        )
-                      })()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => {
-                            setEditingSubject(s)
-                            const deps = ((s as any).departments as string[] | null | undefined)
-                              ?? ((s as any).department
-                                ? String((s as any).department).split(/[;,]/).map((x) => x.trim()).filter(Boolean)
-                                : [])
-                            setSubjectForm({ name: s.name, code: s.code || '', departments: deps })
-                            setShowSubjectModal(true)
-                          }}
-                          className="text-blue-600 hover:text-blue-900"
-                          title="Edit"
-                        >
-                          <Edit className="w-5 h-5" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteSubject(s.id)}
-                          className="text-red-600 hover:text-red-900"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-      </div>
+      {/* No intermediate tables; only one overview table below */}
 
       <div className="mt-6 bg-white rounded-lg shadow overflow-hidden">
         <div className="p-4 border-b">
           <h3 className="text-lg font-semibold">Subject Overview</h3>
-          <p className="text-sm text-gray-600">Quick view with teachers and per‑teacher totals.</p>
+          <p className="text-sm text-gray-600">Subject list with teacher assignments and totals.</p>
         </div>
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Junior Classes</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Senior Classes</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Teachers</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Teacher Totals</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {overviewRows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-6 py-10 text-center text-gray-500">
+                <td colSpan={3} className="px-6 py-10 text-center text-gray-500">
                   No data yet.
                 </td>
               </tr>
@@ -415,10 +311,8 @@ export default function AdminSubjectsPage() {
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900">{r.subject}</div>
                   </td>
-                  <td className="px-6 py-4"><div className="text-sm text-gray-700">{r.junior || '—'}</div></td>
-                  <td className="px-6 py-4"><div className="text-sm text-gray-700">{r.senior || '—'}</div></td>
-                  <td className="px-6 py-4"><div className="text-sm text-gray-700">{r.teachers || '—'}</div></td>
-                  <td className="px-6 py-4"><div className="text-sm text-gray-700">{(r as any).teacher_counts || '—'}</div></td>
+                  <td className="px-6 py-4"><div className="text-sm text-gray-700">{(r as any).teachers || '—'}</div></td>
+                  <td className="px-6 py-4"><div className="text-sm text-gray-700">{(r as any).total ?? 0}</div></td>
                 </tr>
               ))
             )}
@@ -459,7 +353,7 @@ export default function AdminSubjectsPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Departments <span className="text-gray-400 font-normal">(leave empty for core/all students)</span></label>
                 <div className="border rounded-lg p-3">
                   <div className="grid grid-cols-2 gap-2">
-                    {['Science', 'Humanities', 'Arts'].map((dep) => {
+                    {['Science', 'Business', 'Humanities'].map((dep) => {
                       const checked = subjectForm.departments.includes(dep)
                       return (
                         <label key={dep} className="flex items-center gap-2">

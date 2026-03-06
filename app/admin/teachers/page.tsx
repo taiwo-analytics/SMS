@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabase/client'
-import { GraduationCap, Plus, Edit, Trash2, X, BookOpen, User, Upload, CheckSquare } from 'lucide-react'
+import { GraduationCap, Plus, Edit, Trash2, X, BookOpen, User, Upload, CheckSquare, KeyRound } from 'lucide-react'
 import Image from 'next/image'
 import Papa from 'papaparse'
 import { Teacher, Class, Subject } from '@/types/database'
@@ -65,6 +65,10 @@ export default function AdminTeachersPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
+  const [showResetModal, setShowResetModal] = useState(false)
+  const [resetTeacher, setResetTeacher] = useState<TeacherWithDetails | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [resetting, setResetting] = useState(false)
 
   useEffect(() => {
     if (!notice) return
@@ -313,6 +317,7 @@ export default function AdminTeachersPage() {
         body: JSON.stringify({
           id: editingTeacher.id,
           full_name: formData.full_name,
+          email: formData.email || null,
           phone: formData.phone || null,
           gender: formData.gender || null,
           dob: formData.dob || null,
@@ -589,11 +594,10 @@ export default function AdminTeachersPage() {
               : [])
       arr.forEach((d) => { if (d) set.add(d) })
     })
-    const dynamic = Array.from(set)
-    if (dynamic.length === 0) {
-      return ['Science', 'Humanities', 'Arts']
-    }
-    return dynamic
+    set.add('Science'); set.add('Business'); set.add('Humanities')
+    const arr = Array.from(set)
+    const order: Record<string, number> = { Science: 0, Business: 1, Humanities: 2 }
+    return arr.sort((a, b) => (order[a] ?? 99) - (order[b] ?? 99) || a.localeCompare(b))
   }, [classes, subjects])
 
   if (loading) {
@@ -626,6 +630,28 @@ export default function AdminTeachersPage() {
     let hash = 0
     for (let i = 0; i < s.length; i++) hash = (hash + s.charCodeAt(i)) % 997
     return subjectColorClasses[hash % subjectColorClasses.length]
+  }
+
+  const handleResetPassword = async () => {
+    if (!resetTeacher || !newPassword) return
+    setResetting(true)
+    try {
+      const res = await fetch('/api/admin/users/teacher/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacher_id: resetTeacher.id, new_password: newPassword }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed to reset password')
+      setShowResetModal(false)
+      setResetTeacher(null)
+      setNewPassword('')
+      setNotice({ type: 'success', text: `Password reset for ${resetTeacher.full_name}` })
+    } catch (e: any) {
+      setNotice({ type: 'error', text: e.message || 'Failed to reset password' })
+    } finally {
+      setResetting(false)
+    }
   }
 
   const handleUnassignSubjectClass = async (teacherId: string, subjectId: string, classId: string) => {
@@ -906,6 +932,13 @@ export default function AdminTeachersPage() {
                         <Edit className="w-5 h-5" />
                       </button>
                       <button
+                        onClick={() => { setResetTeacher(teacher); setNewPassword(''); setShowResetModal(true) }}
+                        className="text-yellow-600 hover:text-yellow-900"
+                        title="Reset password"
+                      >
+                        <KeyRound className="w-5 h-5" />
+                      </button>
+                      <button
                         onClick={() => handleDeleteTeacher(teacher.id)}
                         className="text-red-600 hover:text-red-900"
                         title="Delete teacher"
@@ -1121,32 +1154,30 @@ export default function AdminTeachersPage() {
                   />
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  autoComplete="off"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  required
+                />
+              </div>
               {!editingTeacher && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                    <input
-                      type="email"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      autoComplete="off"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                    <input
-                      type="password"
-                      value={formData.password}
-                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      autoComplete="new-password"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      required
-                      minLength={6}
-                    />
-                  </div>
-                </>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                  <input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    autoComplete="new-password"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    required
+                    minLength={6}
+                  />
+                </div>
               )}
               <div className="grid grid-cols-3 gap-3 pt-2">
                 <div>
@@ -1328,6 +1359,45 @@ export default function AdminTeachersPage() {
                   className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Assign Class Teacher
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {showResetModal && resetTeacher && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-sm">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Reset Password</h3>
+              <button onClick={() => { setShowResetModal(false); setResetTeacher(null) }}><X className="w-5 h-5" /></button>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Set a new password for <span className="font-semibold">{resetTeacher.full_name}</span>.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  placeholder="Min. 6 characters"
+                  minLength={6}
+                  autoFocus
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button onClick={() => { setShowResetModal(false); setResetTeacher(null) }} className="px-4 py-2 border rounded-lg">Cancel</button>
+                <button
+                  onClick={handleResetPassword}
+                  disabled={resetting || newPassword.length < 6}
+                  className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                >
+                  {resetting ? 'Resetting...' : 'Reset Password'}
                 </button>
               </div>
             </div>

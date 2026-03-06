@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     const body = await req.json()
     const {
       email, password, full_name, parent_id,
-      phone, gender, dob, address, status, admission, admission_date, guardian_name,
+      phone, gender, dob, address, status, admission, admission_date, guardian_name, department,
       class_id,
       nin, guardian_phone, guardian_occupation
     } = body || {}
@@ -82,6 +82,7 @@ export async function POST(req: Request) {
       ['status', status || null],
       ['admission', admission || null],
       ['admission_date', normalizeDate(admission_date)],
+      ['department', department || null],
       ['guardian_name', guardian_name || null],
       ['nin', nin || null],
       ['guardian_phone', guardian_phone || null],
@@ -127,7 +128,7 @@ export async function PUT(req: Request) {
 
     const body = await req.json()
     const {
-      id, full_name, phone, gender, dob, address, status, admission, admission_date,
+      id, full_name, email, phone, gender, dob, address, status, admission, admission_date,
       guardian_name, parent_id, nin, guardian_phone, guardian_occupation, photo_url, department
     } = body || {}
     if (!id) {
@@ -151,7 +152,7 @@ export async function PUT(req: Request) {
     if (photo_url !== undefined) updateData.photo_url = photo_url || null
     if (department !== undefined) updateData.department = department || null
 
-    const { data: student, error } = await supabaseAdmin
+    let { data: student, error } = await supabaseAdmin
       .from('students')
       .update(updateData)
       .eq('id', id)
@@ -159,7 +160,26 @@ export async function PUT(req: Request) {
       .single()
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 })
+      const msg = String(error.message || '').toLowerCase()
+      const hasSchemaCacheIssue = msg.includes('schema cache')
+      const keys = Object.keys(updateData)
+      const missingKeys = keys.filter((k) => msg.includes(k.toLowerCase()))
+      if (hasSchemaCacheIssue && missingKeys.length > 0) {
+        const retryData: Record<string, any> = { ...updateData }
+        for (const k of missingKeys) delete retryData[k]
+        const retry = await supabaseAdmin
+          .from('students')
+          .update(retryData)
+          .eq('id', id)
+          .select()
+          .single()
+        if (retry.error) {
+          return NextResponse.json({ error: retry.error.message }, { status: 400 })
+        }
+        student = retry.data
+      } else {
+        return NextResponse.json({ error: error.message }, { status: 400 })
+      }
     }
 
     if (full_name && student?.user_id) {
@@ -167,6 +187,17 @@ export async function PUT(req: Request) {
         .from('profiles')
         .update({ full_name })
         .eq('id', student.user_id)
+    }
+
+    // Update email in Supabase Auth if provided
+    if (email && student?.user_id) {
+      const { error: emailErr } = await supabaseAdmin.auth.admin.updateUserById(student.user_id, {
+        email,
+        email_confirm: true,
+      })
+      if (emailErr) {
+        return NextResponse.json({ error: `Failed to update email: ${emailErr.message}` }, { status: 400 })
+      }
     }
 
     return NextResponse.json({ student })

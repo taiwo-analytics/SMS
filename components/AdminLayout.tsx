@@ -21,7 +21,9 @@ import {
   UserCheck,
   Bell,
   Calendar,
-  Clock
+  Clock,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 
@@ -33,6 +35,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const router = useRouter()
   const pathname = usePathname()
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [openGroups, setOpenGroups] = useState<string[]>([])
 
   const navigation = [
     { name: 'Dashboard', href: '/admin', icon: Shield },
@@ -45,7 +48,11 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     { name: 'Events', href: '/admin/events', icon: Calendar },
     { name: 'Academics', href: '/admin/academics', icon: Calendar },
     { name: 'Timetable', href: '/admin/timetable', icon: Clock },
-    { name: 'Broadsheet', href: '/admin/results/broadsheet', icon: BarChart3 },
+    { name: 'Results', href: '/admin/results', icon: BarChart3, children: [
+      { name: 'Broadsheet (Class)', href: '/admin/results/broadsheet' },
+      { name: 'Broadsheet (Student)', href: '/admin/results/broadsheet-student' },
+      { name: 'Report Card', href: '/admin/results/report-card' },
+    ]},
     { name: 'Attendance', href: '/admin/attendance', icon: UserCheck },
     { name: 'Messages', href: '/admin/messages', icon: MessageSquare },
     { name: 'Library', href: '/admin/library', icon: Library },
@@ -157,12 +164,17 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
   const loadUnreadCount = async () => {
     try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const uid = user?.id || null
       const { data, error } = await supabase
         .from('messages')
-        .select('id, is_read, read_at, recipient_role')
+        .select('id, is_read, read_at, recipient_role, sender_id')
         .in('recipient_role', ['admin', 'all'])
       if (error) throw error
-      const count = (data || []).filter((m: any) => (m.recipient_role === 'admin' || m.recipient_role === 'all') && (m.is_read === false || m.read_at == null)).length
+      // Only count messages received by admin (not sent by this admin user)
+      const count = (data || []).filter((m: any) =>
+        m.sender_id !== uid && (m.is_read === false || m.read_at == null)
+      ).length
       setUnreadCount(count)
     } catch (e) {
       console.error('Error loading unread messages:', e)
@@ -278,6 +290,46 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
               {navigation.map((item) => {
                 const Icon = item.icon
                 const isActive = pathname === item.href
+                if ((item as any).children) {
+                  const isOpen = openGroups.includes(item.name)
+                  const isGroupActive = (item as any).children.some((c: any) => pathname === c.href)
+                  return (
+                    <div key={item.name}>
+                      <button
+                        onClick={() => setOpenGroups((prev) =>
+                          prev.includes(item.name) ? prev.filter((g) => g !== item.name) : [...prev, item.name]
+                        )}
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                          isGroupActive
+                            ? 'bg-blue-50 text-blue-600 font-medium'
+                            : 'text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        <Icon className="w-5 h-5" />
+                        <span className="flex-1 text-left">{item.name}</span>
+                        {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      </button>
+                      {isOpen && (
+                        <div className="ml-8 mt-1 space-y-1">
+                          {(item as any).children.map((child: any) => (
+                            <button
+                              key={child.name}
+                              onClick={() => { router.push(child.href); setSidebarOpen(false) }}
+                              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                                pathname === child.href
+                                  ? 'bg-blue-50 text-blue-600 font-medium'
+                                  : 'text-gray-600 hover:bg-gray-50'
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-current opacity-50" />
+                              {child.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
                 return (
                   <button
                     key={item.name}

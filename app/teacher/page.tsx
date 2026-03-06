@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { GraduationCap, BookOpen, Users, ClipboardList, UserCheck, FileText, Clock, Calendar, MapPin } from 'lucide-react'
+import Image from 'next/image'
 import { Event } from '@/types/events'
 
 export default function TeacherDashboard() {
@@ -12,9 +13,13 @@ export default function TeacherDashboard() {
   const [stats, setStats] = useState({
     classes: 0,
     students: 0,
+    subjects: 0,
+    attendance7d: 0,
+    grades30d: 0,
   })
   const [upcomingEvents, setUpcomingEvents] = useState<Event[]>([])
   const [assignedSubjects, setAssignedSubjects] = useState<Array<{ class_id: string, class_label: string, subjects: string[] }>>([])
+  const [teacherInfo, setTeacherInfo] = useState<any | null>(null)
 
   const checkAuth = useCallback(async () => {
     try {
@@ -33,6 +38,12 @@ export default function TeacherDashboard() {
         router.push('/')
         return
       }
+      const { data: teacherFull } = await supabase
+        .from('teachers')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle()
+      setTeacherInfo(teacherFull || null)
     } catch (error) {
       console.error('Error checking auth:', error)
       router.push('/auth/login')
@@ -53,19 +64,30 @@ export default function TeacherDashboard() {
         .single()
 
       if (teacher) {
-        const [classesRes, enrollmentsRes] = await Promise.all([
-          supabase.from('classes').select('id', { count: 'exact' }).eq('teacher_id', teacher.id),
-          supabase
-            .from('class_enrollments')
-            .select('student_id', { count: 'exact' })
-            .in('class_id', 
-              (await supabase.from('classes').select('id').eq('teacher_id', teacher.id)).data?.map(c => c.id) || []
-            )
+        const [cstRes, ctRes] = await Promise.all([
+          supabase.from('class_subject_teachers').select('class_id').eq('teacher_id', teacher.id),
+          supabase.from('classes').select('id').eq('class_teacher_id', teacher.id),
         ])
+        const classIdSet = new Set<string>()
+        for (const r of (cstRes.data || [])) classIdSet.add(r.class_id)
+        for (const r of (ctRes.data || [])) classIdSet.add(r.id)
+        const classIds = Array.from(classIdSet)
+
+        const enrollmentsRes = classIds.length
+          ? await supabase.from('class_enrollments').select('student_id', { count: 'exact' }).in('class_id', classIds)
+          : { count: 0 }
+        const subjCountRes = await supabase.from('class_subject_teachers').select('id', { count: 'exact' }).eq('teacher_id', teacher.id)
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+        const attRes = await supabase.from('attendance').select('id', { count: 'exact' }).eq('teacher_id', teacher.id).gte('created_at', sevenDaysAgo)
+        const grdRes = await supabase.from('grades').select('id', { count: 'exact' }).eq('teacher_id', teacher.id).gte('created_at', thirtyDaysAgo)
 
         setStats({
-          classes: classesRes.count || 0,
+          classes: classIds.length,
           students: enrollmentsRes.count || 0,
+          subjects: subjCountRes.count || 0,
+          attendance7d: attRes.count || 0,
+          grades30d: grdRes.count || 0,
         })
       }
     } catch (error) {
@@ -102,7 +124,7 @@ export default function TeacherDashboard() {
         ;(assignments || []).forEach((a: any) => {
           const c = classMap.get(a.class_id)
           const s = subjectMap.get(a.subject_id)
-          const label = c ? `${c.class_level || c.name}${c.department ? ` - ${c.department}` : ''}` : 'Unknown class'
+          const label = c ? `${c.class_level || c.name}` : 'Unknown class'
           const subjLabel = s ? `${s.name}${s.code ? ` (${s.code})` : ''}` : 'Unknown subject'
           if (!byClass.has(a.class_id)) byClass.set(a.class_id, { class_id: a.class_id, class_label: label, subjects: [] })
           const row = byClass.get(a.class_id)!
@@ -272,105 +294,39 @@ export default function TeacherDashboard() {
           </p>
         </div>
 
-        {/* Statistics Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          <div 
-            onClick={() => router.push('/teacher/classes')}
-            className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-blue-500"
-          >
+        <div className="bg-white rounded-lg shadow p-6 mb-8">
+          <div className="flex items-center gap-4">
+            {teacherInfo?.photo_url ? (
+              <Image src={teacherInfo.photo_url} alt={teacherInfo?.full_name || 'Teacher'} width={64} height={64} className="rounded-full object-cover border" unoptimized />
+            ) : (
+              <div className="w-16 h-16 rounded-full bg-gray-200 border" />
+            )}
+            <div>
+              <div className="text-xl font-semibold text-gray-900">{teacherInfo?.full_name || 'Teacher'}</div>
+              <div className="text-sm text-gray-600">{teacherInfo?.email || 'N/A'}</div>
+              <div className="text-sm text-gray-600">{teacherInfo?.title || ''}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 mb-8">
+          <div className="bg-white rounded-lg shadow p-6 border-l-4 border-blue-500">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600 mb-1">My Classes</p>
-                <p className="text-3xl font-bold text-gray-900">{stats.classes}</p>
+                <p className="text-sm text-gray-600 mb-1">Assigned Classes</p>
+                <p className="text-3xl font-bold text-gray-900">{assignedSubjects.length}</p>
               </div>
               <BookOpen className="w-12 h-12 text-blue-500" />
             </div>
           </div>
-
-          <div 
-            onClick={() => router.push('/teacher/students')}
-            className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-green-500"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 mb-1">Total Students</p>
-                <p className="text-3xl font-bold text-gray-900">{stats.students}</p>
-              </div>
-              <Users className="w-12 h-12 text-green-500" />
-            </div>
-          </div>
         </div>
 
-        {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <div
-            onClick={() => router.push('/teacher/classes')}
-            className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer"
-          >
-            <BookOpen className="w-10 h-10 text-blue-600 mb-4" />
-            <h3 className="text-xl font-semibold mb-2">My Classes</h3>
-            <p className="text-gray-600">View and manage your assigned classes</p>
-          </div>
-
-          <div
-            onClick={() => router.push('/teacher/students')}
-            className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer"
-          >
-            <Users className="w-10 h-10 text-green-600 mb-4" />
-            <h3 className="text-xl font-semibold mb-2">My Students</h3>
-            <p className="text-gray-600">View students enrolled in your classes</p>
-          </div>
-
-          <div
-            onClick={() => router.push('/teacher/grades')}
-            className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer"
-          >
-            <ClipboardList className="w-10 h-10 text-purple-600 mb-4" />
-            <h3 className="text-xl font-semibold mb-2">Manage Grades</h3>
-            <p className="text-gray-600">View and manage student grades</p>
-          </div>
-
-          <div
-            onClick={() => router.push('/teacher/attendance')}
-            className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer"
-          >
-            <UserCheck className="w-10 h-10 text-teal-600 mb-4" />
-            <h3 className="text-xl font-semibold mb-2">Attendance</h3>
-            <p className="text-gray-600">Take and review class attendance</p>
-          </div>
-
-          <div
-            onClick={() => router.push('/teacher/assignments')}
-            className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer"
-          >
-            <FileText className="w-10 h-10 text-indigo-600 mb-4" />
-            <h3 className="text-xl font-semibold mb-2">Assignments</h3>
-            <p className="text-gray-600">Create and manage class assignments</p>
-          </div>
-
-          <div
-            onClick={() => router.push('/teacher/timetable')}
-            className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer"
-          >
-            <Clock className="w-10 h-10 text-orange-600 mb-4" />
-            <h3 className="text-xl font-semibold mb-2">Timetable</h3>
-            <p className="text-gray-600">View your weekly schedule</p>
-          </div>
-        </div>
-
-        {/* My Subjects */}
-        <div className="bg-white rounded-lg shadow p-6 mt-8">
+        <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <ClipboardList className="w-6 h-6 text-blue-600" />
-              <h3 className="text-xl font-semibold text-gray-900">My Subjects</h3>
+              <h3 className="text-xl font-semibold text-gray-900">My Assigned Classes</h3>
             </div>
-            <button
-              onClick={() => router.push('/teacher/classes')}
-              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-            >
-              View Classes →
-            </button>
           </div>
           {assignedSubjects.length === 0 ? (
             <p className="text-gray-500 text-center py-8">No subjects assigned yet.</p>
@@ -389,6 +345,8 @@ export default function TeacherDashboard() {
             </div>
           )}
         </div>
+
+        
 
         <div className="bg-white rounded-lg shadow p-6 mt-8">
           <div className="flex items-center justify-between mb-4">

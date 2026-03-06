@@ -3,15 +3,21 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { Users, BookOpen } from 'lucide-react'
-import { Student, Class } from '@/types/database'
+import { Users, BookOpen, ClipboardList, UserCheck } from 'lucide-react'
 
-export default function TeacherStudentsPage() {
+interface AssignedClass {
+  id: string
+  name: string
+  class_level?: string
+  department?: string
+  subjects: string[]
+  isClassTeacher: boolean
+}
+
+export default function TeacherAssignedClassesPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
-  const [students, setStudents] = useState<(Student & { email?: string; classes?: string[] })[]>([])
-  const [selectedClass, setSelectedClass] = useState<string>('all')
-  const [classes, setClasses] = useState<Class[]>([])
+  const [classes, setClasses] = useState<AssignedClass[]>([])
 
   const loadData = useCallback(async (userId: string) => {
     try {
@@ -21,32 +27,37 @@ export default function TeacherStudentsPage() {
         .eq('user_id', userId)
         .single()
       if (!teacher) return
-      const { data: teacherClasses } = await supabase
+
+      const { data: classTeacherClasses } = await supabase
         .from('classes')
-        .select('*')
+        .select('id, name, class_level, department')
+        .eq('class_teacher_id', teacher.id)
+
+      const { data: subjectAssigns } = await supabase
+        .from('class_subject_teachers')
+        .select('class_id, subject_id, classes(id, name, class_level, department), subjects(id, name)')
         .eq('teacher_id', teacher.id)
-      setClasses(teacherClasses || [])
-      const classIds = (teacherClasses || []).map(c => c.id)
-      if (classIds.length === 0) return
-      const { data: enrollments } = await supabase
-        .from('class_enrollments')
-        .select('student_id, class_id')
-        .in('class_id', classIds)
-      if (!enrollments) return
-      const studentIds = Array.from(new Set(enrollments.map(e => e.student_id)))
-      const { data: studentsData } = await supabase
-        .from('students')
-        .select('*')
-        .in('id', studentIds)
-      const studentsWithClasses = (studentsData || []).map(student => {
-        const studentEnrollments = enrollments.filter(e => e.student_id === student.id)
-        const studentClassIds = studentEnrollments.map(e => e.class_id)
-        const studentClassNames = (teacherClasses || [])
-          .filter(c => studentClassIds.includes(c.id))
-          .map(c => c.name)
-        return { ...student, classes: studentClassNames }
-      })
-      setStudents(studentsWithClasses)
+
+      const ctIds = new Set((classTeacherClasses || []).map((c) => c.id))
+
+      // Build class map with assigned subject names
+      const map = new Map<string, AssignedClass>()
+      for (const c of (classTeacherClasses || [])) {
+        map.set(c.id, { ...c, subjects: [], isClassTeacher: true })
+      }
+      for (const r of (subjectAssigns || [])) {
+        const c = (r as any).classes
+        const subName = (r as any).subjects?.name
+        if (!c) continue
+        if (!map.has(c.id)) {
+          map.set(c.id, { ...c, subjects: [], isClassTeacher: ctIds.has(c.id) })
+        }
+        if (subName) {
+          const entry = map.get(c.id)!
+          if (!entry.subjects.includes(subName)) entry.subjects.push(subName)
+        }
+      }
+      setClasses(Array.from(map.values()))
     } catch (error) {
       console.error('Error loading data:', error)
     }
@@ -85,13 +96,6 @@ export default function TeacherStudentsPage() {
     checkAuth()
   }, [checkAuth])
 
-  const filteredStudents = selectedClass === 'all' 
-    ? students 
-    : students.filter(s => {
-        const classNames = classes.filter(c => c.id === selectedClass).map(c => c.name)
-        return s.classes?.some(sc => classNames.includes(sc))
-      })
-
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>
   }
@@ -101,77 +105,54 @@ export default function TeacherStudentsPage() {
         <div className="mb-6">
           <div className="flex items-center gap-4 mb-4">
             <Users className="w-10 h-10 text-green-600" />
-            <h2 className="text-3xl font-bold text-gray-900">My Students</h2>
-          </div>
-          
-          <div className="flex items-center gap-4 mb-6">
-            <label className="text-sm font-medium text-gray-700">Filter by Class:</label>
-            <select
-              value={selectedClass}
-              onChange={(e) => setSelectedClass(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-            >
-              <option value="all">All Classes</option>
-              {classes.map((classItem) => (
-                <option key={classItem.id} value={classItem.id}>
-                  {classItem.name} - {classItem.subject}
-                </option>
-              ))}
-            </select>
+            <h2 className="text-3xl font-bold text-gray-900">Assigned Classes</h2>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Name
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Classes
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Enrolled
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredStudents.length === 0 ? (
-                <tr>
-                  <td colSpan={3} className="px-6 py-12 text-center text-gray-500">
-                    No students found in your classes.
-                  </td>
-                </tr>
-              ) : (
-                filteredStudents.map((student) => (
-                  <tr key={student.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{student.full_name}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-2">
-                        {student.classes?.map((className, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs"
-                          >
-                            <BookOpen className="w-3 h-3" />
-                            {className}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-500">
-                        {new Date(student.created_at).toLocaleDateString()}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {classes.length === 0 ? (
+            <div className="col-span-full text-center text-gray-500 py-12">No assigned classes.</div>
+          ) : (
+            classes.map((c) => (
+              <div key={c.id} className="border rounded-lg p-6 bg-white shadow">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-lg font-semibold text-gray-900">{c.class_level || c.name}</div>
+                  </div>
+                  {c.isClassTeacher && (
+                    <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">Class Teacher</span>
+                  )}
+                </div>
+                {c.subjects.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {c.subjects.map((subName) => (
+                      <span key={subName} className="px-2 py-0.5 text-xs bg-gray-100 text-gray-700 rounded-full">
+                        {subName}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-4 flex gap-2">
+                  <button
+                    onClick={() => router.push(`/teacher/subject-attendance?class_id=${c.id}`)}
+                    className="px-3 py-1.5 border rounded text-xs hover:bg-gray-50 flex items-center gap-1"
+                    title="Take subject attendance"
+                  >
+                    <UserCheck className="w-3 h-3" />
+                    Subject Attendance
+                  </button>
+                  <button
+                    onClick={() => router.push(`/teacher/broadsheet?class_id=${c.id}`)}
+                    className="px-3 py-1.5 border rounded text-xs hover:bg-gray-50 flex items-center gap-1"
+                    title="View broadsheet"
+                  >
+                    <ClipboardList className="w-3 h-3" />
+                    Broadsheet
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
     </div>
   )

@@ -155,7 +155,7 @@ export async function PUT(req: Request) {
 
     const body = await req.json()
     const {
-      id, full_name, phone, gender, dob, address, status, admission,
+      id, full_name, email, phone, gender, dob, address, status, admission,
       title, staff_id, marital_status, next_of_kin, next_of_kin_phone,
       course_of_study, institution_name, years_of_experience,
       subjects_taught, degrees, certifications, workshops,
@@ -234,6 +234,19 @@ export async function PUT(req: Request) {
         .from('profiles')
         .update({ full_name })
         .eq('id', teacher.user_id)
+    }
+
+    // Update email in Supabase Auth and teachers table if provided
+    if (email && teacher?.user_id) {
+      const { error: emailErr } = await supabaseAdmin.auth.admin.updateUserById(teacher.user_id, {
+        email,
+        email_confirm: true,
+      })
+      if (emailErr) {
+        return NextResponse.json({ error: `Failed to update email: ${emailErr.message}` }, { status: 400 })
+      }
+      // Also update email in the teachers table
+      await supabaseAdmin.from('teachers').update({ email }).eq('id', id)
     }
 
     return NextResponse.json({ teacher })

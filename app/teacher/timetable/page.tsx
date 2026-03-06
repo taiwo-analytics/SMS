@@ -13,6 +13,7 @@ export default function TeacherTimetablePage() {
   const [loading, setLoading] = useState(true)
   const [entries, setEntries] = useState<Timetable[]>([])
   const [classes, setClasses] = useState<Class[]>([])
+  const [mode, setMode] = useState<'assigned' | 'myclass'>('assigned')
 
   const checkAuthAndLoad = useCallback(async () => {
     try {
@@ -24,8 +25,8 @@ export default function TeacherTimetablePage() {
       const { data: teacher } = await supabase
         .from('teachers').select('id').eq('user_id', user.id).single()
       if (!teacher) { setLoading(false); return }
-      const { data: classesRes } = await supabase.from('classes').select('*').eq('teacher_id', teacher.id)
-      const classIds = (classesRes || []).map(c => c.id)
+      const { data: myClassRes } = await supabase.from('classes').select('*').eq('class_teacher_id', teacher.id)
+      const myClassIds = (myClassRes || []).map(c => c.id)
       const { data: assignments } = await supabase
         .from('class_subject_teachers')
         .select('class_id, subject_id, teacher_id')
@@ -44,31 +45,37 @@ export default function TeacherTimetablePage() {
         assignmentMap.get(a.class_id)!.add(nm)
       })
 
-      const [byTeacher, byClass] = await Promise.all([
+      const [byTeacher, byAssignedClasses, byMyClasses] = await Promise.all([
         supabase.from('timetables').select('*').eq('teacher_id', teacher.id),
-        (classIds.length > 0)
-          ? supabase.from('timetables').select('*').in('class_id', classIds)
+        supabase.from('timetables').select('*'),
+        (myClassIds.length > 0)
+          ? supabase.from('timetables').select('*').in('class_id', myClassIds)
           : Promise.resolve({ data: [] as any[] }),
       ])
       const norm = (s: any) => String(s || '').trim().toLowerCase()
-      const merged = [...(byTeacher.data || []), ...((byClass as any).data || [])]
-      const filtered = merged.filter((e: any) => {
-        if (e.teacher_id === teacher.id) return true
-        const set = assignmentMap.get(e.class_id)
-        if (!set) return false
-        return set.has(norm(e.subject))
-      })
+      let filtered: any[] = []
+      if (mode === 'assigned') {
+        const merged = [...(byTeacher.data || []), ...((byAssignedClasses as any).data || [])]
+        filtered = merged.filter((e: any) => {
+          if (e.teacher_id === teacher.id) return true
+          const set = assignmentMap.get(e.class_id)
+          if (!set) return false
+          return set.has(norm(e.subject))
+        })
+      } else {
+        filtered = (byMyClasses as any).data || []
+      }
       const unique = new Map<string, Timetable>()
       filtered.forEach((e: any) => unique.set(e.id, e))
       const list = Array.from(unique.values()).sort((a, b) => a.start_time.localeCompare(b.start_time))
       setEntries(list as Timetable[])
-      setClasses(classesRes || [])
+      setClasses(myClassRes || [])
     } catch (error) {
       console.error('Error:', error)
     } finally {
       setLoading(false)
     }
-  }, [router])
+  }, [router, mode])
 
   useEffect(() => { checkAuthAndLoad() }, [checkAuthAndLoad])
 
@@ -95,15 +102,32 @@ export default function TeacherTimetablePage() {
 
   return (
     <div>
-        <div className="flex items-center gap-4 mb-6">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-4">
           <Clock className="w-10 h-10 text-blue-600" />
-          <h2 className="text-3xl font-bold text-gray-900">My Schedule</h2>
+            <h2 className="text-3xl font-bold text-gray-900">Timetable</h2>
+          </div>
+          <div className="flex rounded-xl border border-gray-200 overflow-hidden">
+            {(['myclass','assigned'] as ('myclass'|'assigned')[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`px-4 py-2 text-sm font-medium capitalize transition-colors ${
+                  mode === m ? 'bg-teal-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {m === 'myclass' ? 'My class' : 'Assigned classes'}
+              </button>
+            ))}
+          </div>
         </div>
 
         {entries.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
             <Clock className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600">No timetable entries assigned to you yet.</p>
+            <p className="text-gray-600">
+              {mode === 'myclass' ? 'No timetable for your homeroom class.' : 'No timetable entries assigned to you yet.'}
+            </p>
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden">

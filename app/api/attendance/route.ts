@@ -101,7 +101,7 @@ export async function GET(req: Request) {
 
 /**
  * POST /api/attendance — teacher submits attendance for a class on a date
- * Body: { class_id, date, entries: [{ student_id, status, notes? }] }
+ * Body: { class_id, date, entries: [{ student_id, statuses: string[], notes? }] }
  * Uses upsert so re-submitting the same class+date updates existing records.
  */
 export async function POST(req: Request) {
@@ -140,6 +140,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing required fields: class_id, date, entries[]' }, { status: 400 })
     }
 
+    // Disallow future dates (UTC ISO yyyy-mm-dd)
+    const todayIso = new Date().toISOString().slice(0, 10)
+    if (String(date) > todayIso) {
+      return NextResponse.json({ error: 'Cannot submit attendance for a future date' }, { status: 400 })
+    }
+
     // Verify teacher is the class teacher (check both class_teacher_id and legacy teacher_id)
     const { data: classRecord } = await supabase
       .from('classes')
@@ -156,14 +162,20 @@ export async function POST(req: Request) {
     }
 
     // Build upsert rows
-    const rows = entries.map((entry: { student_id: string; status: string; notes?: string }) => ({
-      student_id: entry.student_id,
-      class_id,
-      teacher_id: teacher.id,
-      date,
-      status: entry.status,
-      notes: entry.notes || null,
-    }))
+    const allowed = new Set(['present','absent','late'])
+    const rows = entries.map((entry: { student_id: string; statuses: string[]; notes?: string }) => {
+      const statuses = Array.isArray(entry.statuses)
+        ? entry.statuses.filter((s) => allowed.has(s))
+        : []
+      return {
+        student_id: entry.student_id,
+        class_id,
+        teacher_id: teacher.id,
+        date,
+        statuses,
+        notes: entry.notes || null,
+      }
+    })
 
     const { data: records, error } = await supabase
       .from('attendance')

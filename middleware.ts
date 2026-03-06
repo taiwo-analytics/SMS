@@ -11,7 +11,7 @@ const ROLE_ROUTE_MAP: Record<string, string> = {
 
 const ROLE_HOME_MAP: Record<string, string> = {
   admin: '/admin',
-  teacher: '/teacher/classes',
+  teacher: '/teacher',
   student: '/student/classes',
   parent: '/parent/children',
 }

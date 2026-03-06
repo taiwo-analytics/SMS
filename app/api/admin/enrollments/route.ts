@@ -136,7 +136,6 @@ export async function POST(req: Request) {
               .filter(Boolean)
           )
           if (set.size === 1) classDep = Array.from(set)[0]
-          else if (set.size > 1) classDep = 'Mixed'
           else classDep = null
         } else {
           // If selecting department fails due to schema mismatch, fall back to the selected one

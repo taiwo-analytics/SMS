@@ -37,14 +37,14 @@ export default function AdminReportsPage() {
         supabase.from('students').select('id', { count: 'exact' }),
         supabase.from('classes').select('id, name, class_level'),
         supabase.from('class_enrollments').select('id', { count: 'exact' }),
-        supabase.from('attendance').select('id, status, class_id'),
+        supabase.from('attendance').select('id, statuses, class_id'),
         supabase.from('grades').select('id, score, max_score'),
       ])
       const totalClasses = classesRes.data?.length || 0
       const totalEnrollments = enrollmentsRes.count || 0
       const averageStudentsPerClass = totalClasses > 0 ? parseFloat((totalEnrollments / totalClasses).toFixed(1)) : 0
       const allAttendance = attendanceRes.data || []
-      const presentCount = allAttendance.filter((a: any) => a.status === 'present').length
+      const presentCount = allAttendance.filter((a: any) => Array.isArray(a.statuses) && a.statuses.includes('present')).length
       const attendanceRate = allAttendance.length > 0 ? parseFloat(((presentCount / allAttendance.length) * 100).toFixed(1)) : 0
       const allGrades = gradesRes.data || []
       const avgGrade = allGrades.length > 0
@@ -74,7 +74,7 @@ export default function AdminReportsPage() {
       allAttendance.forEach((a: any) => {
         if (!classAttMap[a.class_id]) classAttMap[a.class_id] = { total: 0, present: 0 }
         classAttMap[a.class_id].total++
-        if (a.status === 'present') classAttMap[a.class_id].present++
+        if (Array.isArray(a.statuses) && a.statuses.includes('present')) classAttMap[a.class_id].present++
       })
       const attStats = Object.entries(classAttMap).map(([classId, data]) => ({
         className: classNames[classId] || classId.slice(0, 8),

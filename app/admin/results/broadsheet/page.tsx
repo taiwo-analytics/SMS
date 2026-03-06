@@ -13,11 +13,22 @@ export default function BroadsheetPage() {
   const [view, setView] = useState<'students' | 'subjects'>('students')
   const [broadsheet, setBroadsheet] = useState<any | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
-    supabase.from('academic_sessions').select('*').order('created_at', { ascending: false }).then(({ data }) => setSessions(data || []))
-    supabase.from('classes').select('*').order('name').then(({ data }) => setClasses(data || []))
+    setLoadError('')
+    Promise.all([
+      supabase.from('academic_sessions').select('*').order('created_at', { ascending: false }),
+      supabase.from('classes').select('*').order('name'),
+    ]).then(([sessionsRes, classesRes]) => {
+      let err = ''
+      if (sessionsRes.error) err += `Sessions: ${sessionsRes.error.message}`
+      else setSessions(sessionsRes.data || [])
+      if (classesRes.error) err += (err ? ` | ` : '') + `Classes: ${classesRes.error!.message}`
+      else setClasses(classesRes.data || [])
+      setLoadError(err)
+    })
   }, [])
 
   useEffect(() => {
@@ -129,6 +140,7 @@ export default function BroadsheetPage() {
         )}
       </div>
 
+      {loadError && <div className="bg-red-50 border border-red-200 text-red-700 rounded p-4 mb-4">Filter load error: {loadError}</div>}
       {loading && <div className="text-center py-12 text-gray-500">Loading broadsheet...</div>}
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded p-4 mb-4">{error}</div>}
 

@@ -131,13 +131,13 @@ export async function GET(req: NextRequest) {
   // Fetch attendance
   const { data: attendance } = await supabase
     .from('attendance')
-    .select('status')
+    .select('statuses')
     .eq('student_id', student_id)
 
   const attendanceSummary = {
-    present: (attendance || []).filter((a: any) => a.status === 'present').length,
-    absent: (attendance || []).filter((a: any) => a.status === 'absent').length,
-    late: (attendance || []).filter((a: any) => a.status === 'late').length,
+    present: (attendance || []).filter((a: any) => Array.isArray(a.statuses) && a.statuses.includes('present')).length,
+    absent: (attendance || []).filter((a: any) => Array.isArray(a.statuses) && a.statuses.includes('absent')).length,
+    late: (attendance || []).filter((a: any) => Array.isArray(a.statuses) && a.statuses.includes('late')).length,
     total: (attendance || []).length,
   }
 

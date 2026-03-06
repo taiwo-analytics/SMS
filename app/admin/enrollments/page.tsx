@@ -376,8 +376,8 @@ export default function AdminEnrollmentsPage() {
                   <option value="">— Keep current —</option>
                   <option value="General">General</option>
                   <option value="Science">Science</option>
+                  <option value="Business">Business</option>
                   <option value="Humanities">Humanities</option>
-                  <option value="Arts">Arts</option>
                 </select>
               </div>
 

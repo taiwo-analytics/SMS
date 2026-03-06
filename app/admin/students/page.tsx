@@ -205,6 +205,7 @@ export default function AdminStudentsPage() {
         body: JSON.stringify({
           id: editingStudent.id,
           full_name: formData.full_name,
+          email: formData.email || null,
           phone: formData.phone || null,
           gender: formData.gender || null,
           dob: formData.dob || null,
@@ -661,7 +662,7 @@ export default function AdminStudentsPage() {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Photo</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Parent</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Gender</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Classes</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
             </tr>
@@ -707,7 +708,7 @@ export default function AdminStudentsPage() {
                     <div className="text-sm text-gray-500">{student.email || 'N/A'}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-500">{student.parent_name || 'None'}</div>
+                    <div className="text-sm text-gray-500">{student.gender || 'N/A'}</div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-1">
@@ -847,8 +848,8 @@ export default function AdminStudentsPage() {
                   <select value={formData.department} onChange={(e) => setFormData({ ...formData, department: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg">
                     <option value="">None</option>
                     <option value="Science">Science</option>
+                    <option value="Business">Business</option>
                     <option value="Humanities">Humanities</option>
-                    <option value="Arts">Arts</option>
                   </select>
                 </div>
               </div>
@@ -885,6 +886,16 @@ export default function AdminStudentsPage() {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  autoComplete="off"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
               {!editingStudent && (
                 <>
                   <div>
@@ -901,16 +912,6 @@ export default function AdminStudentsPage() {
                         </option>
                       ))}
                     </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                    <input
-                      type="email"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      autoComplete="off"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>

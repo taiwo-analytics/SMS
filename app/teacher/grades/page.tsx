@@ -78,15 +78,20 @@ export default function TeacherGradesPage() {
         .single()
 
       if (teacher) {
-        const { data } = await supabase
-          .from('classes')
-          .select('*')
-          .eq('teacher_id', teacher.id)
-
-        setClasses(data || [])
-        if (data && data.length > 0) {
-          setSelectedClass(data[0].id)
+        // Get classes from class_subject_teachers + classes where teacher is class teacher
+        const [{ data: cst }, { data: ctClasses }] = await Promise.all([
+          supabase.from('class_subject_teachers').select('class_id, classes(id, name)').eq('teacher_id', teacher.id),
+          supabase.from('classes').select('id, name').eq('class_teacher_id', teacher.id),
+        ])
+        const classMap = new Map<string, any>()
+        for (const r of (cst || [])) {
+          const c = r.classes as any
+          if (c) classMap.set(c.id, c)
         }
+        for (const c of (ctClasses || [])) classMap.set(c.id, c)
+        const data = Array.from(classMap.values())
+        setClasses(data)
+        if (data.length > 0) setSelectedClass(data[0].id)
       }
     } catch (error) {
       console.error('Error loading classes:', error)

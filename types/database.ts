@@ -111,7 +111,7 @@ export interface Grade {
   created_at: string
 }
 
-export type AttendanceStatus = 'present' | 'absent' | 'late' | 'excused'
+export type AttendanceStatus = 'present' | 'absent' | 'late'
 
 export interface Attendance {
   id: string
@@ -119,7 +119,7 @@ export interface Attendance {
   class_id: string
   teacher_id: string
   date: string
-  status: AttendanceStatus
+  statuses: AttendanceStatus[]
   notes?: string | null
   created_at: string
 }
@@ -245,6 +245,18 @@ export interface ReportRemark {
   principal_remark?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface SubjectAttendance {
+  id: string
+  student_id: string
+  class_id: string
+  subject_id: string
+  teacher_id: string
+  date: string
+  statuses: AttendanceStatus[]
+  notes?: string | null
+  created_at: string
 }
 
 export interface Timetable {

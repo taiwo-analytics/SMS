@@ -96,6 +96,7 @@ ALTER TABLE students ADD COLUMN IF NOT EXISTS status TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS admission TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS admission_date DATE;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS guardian_name TEXT;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS department TEXT;
 -- Additional student fields
 ALTER TABLE students ADD COLUMN IF NOT EXISTS nin TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS guardian_phone TEXT;
@@ -140,6 +141,27 @@ ALTER TABLE parents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE class_enrollments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE class_enrollments ADD COLUMN IF NOT EXISTS department TEXT;
+ALTER TABLE classes ADD COLUMN IF NOT EXISTS class_leader_id UUID REFERENCES students(id);
+CREATE OR REPLACE FUNCTION sync_student_department()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.department IS NULL THEN
+    UPDATE students SET department = NULL WHERE id = NEW.student_id;
+    RETURN NEW;
+  END IF;
+  PERFORM 1 FROM classes WHERE id = NEW.class_id AND class_level ILIKE 'SS%';
+  IF FOUND THEN
+    UPDATE students SET department = NEW.department WHERE id = NEW.student_id;
+  ELSE
+    UPDATE students SET department = NULL WHERE id = NEW.student_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_sync_student_dept_ins ON class_enrollments;
+CREATE TRIGGER trg_sync_student_dept_ins
+AFTER INSERT OR UPDATE OF department ON class_enrollments
+FOR EACH ROW EXECUTE FUNCTION sync_student_department();
 
 -- Profiles policies
 CREATE POLICY "Users can view their own profile"
@@ -615,17 +637,17 @@ CREATE POLICY "Admins can view all grades"
     )
   );
 
--- Create attendance table
 CREATE TABLE IF NOT EXISTS attendance (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   student_id UUID REFERENCES students(id) ON DELETE CASCADE NOT NULL,
   class_id UUID REFERENCES classes(id) ON DELETE CASCADE NOT NULL,
   teacher_id UUID REFERENCES teachers(id) ON DELETE SET NULL NOT NULL,
   date DATE NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('present', 'absent', 'late', 'excused')),
+  statuses TEXT[] NOT NULL DEFAULT '{}'::text[],
   notes TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
-  UNIQUE(student_id, class_id, date)
+  UNIQUE(student_id, class_id, date),
+  CONSTRAINT attendance_statuses_allowed CHECK (statuses <@ ARRAY['present','absent','late']::text[])
 );
 
 ALTER TABLE attendance ENABLE ROW LEVEL SECURITY;

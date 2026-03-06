@@ -53,6 +53,14 @@ export default function TeacherResultsPage() {
     })()
   }, [])
 
+  useEffect(() => {
+    const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+    const cid = sp.get('class_id') || ''
+    if (cid && allClasses.some((c: any) => c.id === cid)) {
+      setSelectedClassId(cid)
+    }
+  }, [allClasses])
+
   const selectedAssignment = assignments.find((a) => a.id === selectedAssignmentId) || null
   const classSubjects = assignments.filter((a: any) => a.class_id === selectedClassId)
 

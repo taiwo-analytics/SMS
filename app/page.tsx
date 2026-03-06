@@ -12,7 +12,7 @@ import {
 function ModuleSelectionContent() {
   const modules = [
     { title: 'Administration', icon: <Shield className="w-10 h-10" />, href: '/admin' },
-    { title: 'Teacher', icon: <GraduationCap className="w-10 h-10" />, href: '/teacher/classes' },
+    { title: 'Teacher', icon: <GraduationCap className="w-10 h-10" />, href: '/teacher' },
     { title: 'Student', icon: <User className="w-10 h-10" />, href: '/student/classes' },
     { title: 'Parent', icon: <Users className="w-10 h-10" />, href: '/parent/children' },
   ]

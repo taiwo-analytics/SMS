@@ -17,6 +17,8 @@ import {
   Bell,
   Calendar,
   MapPin,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 
@@ -28,6 +30,7 @@ export default function TeacherLayout({ children }: TeacherLayoutProps) {
   const router = useRouter()
   const pathname = usePathname()
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [openGroups, setOpenGroups] = useState<string[]>([])
   const [eventCount, setEventCount] = useState(0)
   const [showNotifications, setShowNotifications] = useState(false)
   const [upcomingEvents, setUpcomingEvents] = useState<any[]>([])
@@ -35,12 +38,16 @@ export default function TeacherLayout({ children }: TeacherLayoutProps) {
 
   const navigation = [
     { name: 'Dashboard', href: '/teacher', icon: GraduationCap },
-    { name: 'My Classes', href: '/teacher/classes', icon: BookOpen },
-    { name: 'My Students', href: '/teacher/students', icon: Users },
-    { name: 'Grades', href: '/teacher/grades', icon: ClipboardList },
-    { name: 'Results', href: '/teacher/results', icon: ClipboardList },
-    { name: 'Broadsheet', href: '/teacher/broadsheet', icon: FileText },
-    { name: 'Attendance', href: '/teacher/attendance', icon: UserCheck },
+    { name: 'My Class', href: '/teacher/classes', icon: BookOpen },
+    { name: 'Assigned Classes', href: '/teacher/students', icon: Users },
+    { name: 'Results', href: '/teacher/broadsheet', icon: ClipboardList, children: [
+      { name: 'Broadsheet', href: '/teacher/broadsheet' },
+      { name: 'Report Card', href: '/teacher/report-card' },
+    ]},
+    { name: 'Attendance', href: '/teacher/attendance', icon: UserCheck, children: [
+      { name: 'Class Attendance', href: '/teacher/attendance' },
+      { name: 'Subject Attendance', href: '/teacher/subject-attendance' },
+    ]},
     { name: 'Assignments', href: '/teacher/assignments', icon: FileText },
     { name: 'Timetable', href: '/teacher/timetable', icon: Clock },
     { name: 'Messages', href: '/teacher/messages', icon: MessageSquare },
@@ -118,19 +125,24 @@ export default function TeacherLayout({ children }: TeacherLayoutProps) {
       const [broadcastRes, directRes] = await Promise.all([
         supabase
           .from('messages')
-          .select('id, is_read, read_at, recipient_role')
+          .select('id, is_read, read_at, recipient_role, sender_id')
           .in('recipient_role', ['teacher', 'all'])
           .is('recipient_id', null),
         uid
           ? supabase
               .from('messages')
-              .select('id, is_read, read_at, recipient_role')
+              .select('id, is_read, read_at, recipient_role, sender_id')
               .eq('recipient_id', uid)
           : Promise.resolve({ data: [] as any[], error: null }),
       ])
 
-      const all = [...(broadcastRes.data || []), ...((directRes as any).data || [])]
-      const count = all.filter((m: any) => m.is_read === false || m.read_at == null).length
+      const seen = new Set<string>()
+      const all: any[] = []
+      for (const m of [...(broadcastRes.data || []), ...((directRes as any).data || [])]) {
+        if (!seen.has(m.id)) { seen.add(m.id); all.push(m) }
+      }
+      // Only count messages not sent by this teacher
+      const count = all.filter((m: any) => m.sender_id !== uid && (m.is_read === false || m.read_at == null)).length
       setUnreadCount(count)
     } catch (e) {
       console.error('Error loading unread messages:', e)
@@ -290,6 +302,46 @@ export default function TeacherLayout({ children }: TeacherLayoutProps) {
               {navigation.map((item) => {
                 const Icon = item.icon
                 const isActive = pathname === item.href
+                if ((item as any).children) {
+                  const isOpen = openGroups.includes(item.name)
+                  const isGroupActive = (item as any).children.some((c: any) => pathname === c.href)
+                  return (
+                    <div key={item.name}>
+                      <button
+                        onClick={() => setOpenGroups((prev) =>
+                          prev.includes(item.name) ? prev.filter((g) => g !== item.name) : [...prev, item.name]
+                        )}
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                          isGroupActive
+                            ? 'bg-blue-50 text-blue-600 font-medium'
+                            : 'text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        <Icon className="w-5 h-5" />
+                        <span className="flex-1 text-left">{item.name}</span>
+                        {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      </button>
+                      {isOpen && (
+                        <div className="ml-8 mt-1 space-y-1">
+                          {(item as any).children.map((child: any) => (
+                            <button
+                              key={child.name}
+                              onClick={() => { router.push(child.href); setSidebarOpen(false) }}
+                              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                                pathname === child.href
+                                  ? 'bg-blue-50 text-blue-600 font-medium'
+                                  : 'text-gray-600 hover:bg-gray-50'
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-current opacity-50" />
+                              {child.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
                 return (
                   <button
                     key={item.name}

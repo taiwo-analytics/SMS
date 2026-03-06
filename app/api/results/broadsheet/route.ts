@@ -59,6 +59,12 @@ export async function GET(req: NextRequest) {
 
   if (!accessType) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
+  // Determine which subjects this teacher can edit scores for
+  let editableSubjectIds: string[] = []
+  if (caller.role === 'teacher' && caller.teacherId && accessType === 'subject') {
+    editableSubjectIds = allowedSubjectIds
+  }
+
   // Fetch all scores for class+term
   let scoresQuery = supabase
     .from('subject_scores')
@@ -152,7 +158,7 @@ export async function GET(req: NextRequest) {
       position: sorted.findIndex((r) => r.student.id === row.student.id) + 1,
     }))
 
-    return NextResponse.json({ view: 'students', subjects, rows: rowsWithPosition, accessType })
+    return NextResponse.json({ view: 'students', subjects, rows: rowsWithPosition, accessType, editableSubjectIds })
   } else {
     // Rows = subjects, cols = students
     const rows = subjects.map((subject) => {
@@ -169,6 +175,6 @@ export async function GET(req: NextRequest) {
       }
       return { subject, cells }
     })
-    return NextResponse.json({ view: 'subjects', students, rows, accessType })
+    return NextResponse.json({ view: 'subjects', students, rows, accessType, editableSubjectIds })
   }
 }

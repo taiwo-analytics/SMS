@@ -27,36 +27,21 @@ export default function TeacherMessagesPage() {
   const [newMessage, setNewMessage] = useState({ recipient: 'admin', subject: '', content: '', reply_to: null as string | null })
   const [selectedMessage, setSelectedMessage] = useState<MessageItem | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'inbox' | 'sent'>('inbox')
 
   const loadMessages = useCallback(async (currentUserId?: string) => {
     try {
       const uid = currentUserId || userId
-      // Fetch broadcast messages (to 'teacher' or 'all' with no specific recipient)
-      // and direct messages addressed specifically to this teacher
-      const [broadcastRes, directRes] = await Promise.all([
-        supabase
-          .from('messages')
-          .select('*')
-          .in('recipient_role', ['teacher', 'all'])
-          .is('recipient_id', null)
-          .order('created_at', { ascending: false }),
-        uid
-          ? supabase
-              .from('messages')
-              .select('*')
-              .eq('recipient_id', uid)
-              .order('created_at', { ascending: false })
-          : Promise.resolve({ data: [] as any[], error: null }),
-      ])
-      if (broadcastRes.error) throw broadcastRes.error
-      // Merge and deduplicate by id
-      const seen = new Set<string>()
-      const combined: any[] = []
-      for (const m of [...(broadcastRes.data || []), ...((directRes as any).data || [])]) {
-        if (!seen.has(m.id)) { seen.add(m.id); combined.push(m) }
-      }
-      combined.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      const allMessages = combined.map((m: any) => ({
+      // Fetch all messages visible to this teacher:
+      // - broadcast to 'teacher' or 'all'
+      // - direct messages to this teacher
+      // - messages sent by this teacher
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      const allMessages = (data || []).map((m: any) => ({
         ...m,
         date: new Date(m.created_at).toLocaleString(),
       }))
@@ -173,7 +158,10 @@ export default function TeacherMessagesPage() {
     }
   }
 
-  const unreadCount = messages.filter(m => !m.is_read).length
+  const inboxMessages = messages.filter(m => m.sender_id !== userId)
+  const sentMessages = messages.filter(m => m.sender_id === userId)
+  const displayedMessages = activeTab === 'inbox' ? inboxMessages : sentMessages
+  const unreadCount = inboxMessages.filter(m => !m.is_read).length
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>
@@ -195,15 +183,28 @@ export default function TeacherMessagesPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
             <div className="bg-white rounded-lg shadow p-6">
-              <h3 className="text-lg font-semibold mb-4">Inbox</h3>
-              {messages.length === 0 ? (
+              <div className="flex items-center gap-2 mb-4 border-b pb-3">
+                <button
+                  onClick={() => setActiveTab('inbox')}
+                  className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${activeTab === 'inbox' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  Inbox {unreadCount > 0 && <span className="ml-1 bg-red-500 text-white text-xs rounded-full px-1.5">{unreadCount}</span>}
+                </button>
+                <button
+                  onClick={() => setActiveTab('sent')}
+                  className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${activeTab === 'sent' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  Sent
+                </button>
+              </div>
+              {displayedMessages.length === 0 ? (
                 <div className="text-center py-12 text-gray-500">
                   <MessageSquare className="w-16 h-16 mx-auto mb-4 text-gray-400" />
                   <p>No messages yet</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {messages.map((message) => (
+                  {displayedMessages.map((message) => (
                     <div key={message.id}>
                       <div
                         onClick={() => handleSelectMessage(message)}

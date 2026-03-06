@@ -2,15 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
-import { UserCheck, ChevronLeft, ChevronRight, Download, Users, CheckCircle, XCircle, Clock, ShieldCheck, Calendar } from 'lucide-react'
+import { UserCheck, ChevronLeft, ChevronRight, Download, Users, CheckCircle, XCircle, Clock, Calendar } from 'lucide-react'
 
 type ViewMode = 'daily' | 'weekly' | 'monthly'
+type AttType = 'class' | 'subject'
 
 const STATUS_STYLES: Record<string, { label: string; bg: string; text: string; dot: string }> = {
   present:  { label: 'Present',  bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500' },
   absent:   { label: 'Absent',   bg: 'bg-red-100',     text: 'text-red-700',     dot: 'bg-red-500' },
   late:     { label: 'Late',     bg: 'bg-amber-100',   text: 'text-amber-700',   dot: 'bg-amber-400' },
-  excused:  { label: 'Excused',  bg: 'bg-sky-100',     text: 'text-sky-700',     dot: 'bg-sky-500' },
 }
 
 function toISO(d: Date) { return d.toISOString().slice(0, 10) }
@@ -31,9 +31,12 @@ function fmtMonth(d: Date) {
 
 export default function AdminAttendancePage() {
   const [view, setView] = useState<ViewMode>('daily')
+  const [attType, setAttType] = useState<AttType>('class')
   const [anchor, setAnchor] = useState(new Date()) // reference date for navigation
   const [classes, setClasses] = useState<any[]>([])
   const [classId, setClassId] = useState('')
+  const [subjects, setSubjects] = useState<any[]>([])
+  const [subjectId, setSubjectId] = useState('')
   const [records, setRecords] = useState<any[]>([])
   const [students, setStudents] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -46,8 +49,8 @@ export default function AdminAttendancePage() {
     }
     if (view === 'weekly') {
       const mon = startOfWeek(anchor)
-      const sun = addDays(mon, 6)
-      return { from: toISO(mon), to: toISO(sun), label: `${fmtShort(toISO(mon))} – ${fmtShort(toISO(sun))}` }
+      const fri = addDays(mon, 4)
+      return { from: toISO(mon), to: toISO(fri), label: `${fmtShort(toISO(mon))} – ${fmtShort(toISO(fri))}` }
     }
     // monthly
     const s = startOfMonth(anchor)
@@ -72,24 +75,55 @@ export default function AdminAttendancePage() {
           .sort((a: any, b: any) => a.full_name.localeCompare(b.full_name))
         setStudents(list)
       })
+    // Load subjects for selected class (for subject attendance)
+    supabase
+      .from('class_subject_teachers')
+      .select('subject_id, subjects(id, name, code)')
+      .eq('class_id', classId)
+      .then(({ data }) => {
+        const subs = (data || []).map((r: any) => r.subjects).filter(Boolean)
+          .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''))
+        setSubjects(subs)
+        // Default to "No subject" until admin chooses one
+        setSubjectId('')
+      })
   }, [classId])
 
   useEffect(() => {
-    if (!classId) { setRecords([]); return }
     fetchAttendance()
-  }, [classId, dateRange.from, dateRange.to])
+  }, [classId, subjectId, attType, dateRange.from, dateRange.to])
 
   const fetchAttendance = async () => {
     setLoading(true)
     try {
-      const params = new URLSearchParams({ class_id: classId, from: dateRange.from, to: dateRange.to })
-      const res = await fetch(`/api/admin/attendance?${params}`)
+      const params = new URLSearchParams()
+      if (classId) params.set('class_id', classId)
+      if (attType === 'subject' && subjectId) params.set('subject_id', subjectId)
+      params.set('from', dateRange.from)
+      params.set('to', dateRange.to)
+      if (attType === 'subject' && !subjectId) {
+        setRecords([])
+        return
+      }
+      const res = await fetch(attType === 'subject' ? `/api/admin/subject-attendance?${params}` : `/api/admin/attendance?${params}`)
       const js = await res.json()
       setRecords(js.records || [])
     } finally {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    const ch = supabase
+      .channel('admin-attendance')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: attType === 'subject' ? 'subject_attendance' : 'attendance' },
+        () => { fetchAttendance() }
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [classId, subjectId, attType, dateRange.from, dateRange.to])
 
   // Navigate anchor
   const navigate = (dir: -1 | 1) => {
@@ -119,29 +153,39 @@ export default function AdminAttendancePage() {
     ? datesInRange
     : datesInRange.filter((d) => records.some((r) => r.date === d))
 
-  // Index: student → date → status
-  const index: Record<string, Record<string, string>> = {}
+  // Index: student → date → statuses[]
+  const index: Record<string, Record<string, string[]>> = {}
   for (const r of records) {
     if (!index[r.student_id]) index[r.student_id] = {}
-    index[r.student_id][r.date] = r.status
+    index[r.student_id][r.date] = Array.isArray(r.statuses)
+      ? r.statuses
+      : (r.status ? [r.status] : [])
   }
 
   // Summary totals
   const totals = {
-    present: records.filter((r) => r.status === 'present').length,
-    absent:  records.filter((r) => r.status === 'absent').length,
-    late:    records.filter((r) => r.status === 'late').length,
-    excused: records.filter((r) => r.status === 'excused').length,
+    present: records.filter((r) => {
+      const arr = Array.isArray(r.statuses) ? r.statuses : (r.status ? [r.status] : [])
+      return arr.includes('present')
+    }).length,
+    absent: records.filter((r) => {
+      const arr = Array.isArray(r.statuses) ? r.statuses : (r.status ? [r.status] : [])
+      return arr.includes('absent')
+    }).length,
+    late: records.filter((r) => {
+      const arr = Array.isArray(r.statuses) ? r.statuses : (r.status ? [r.status] : [])
+      return arr.includes('late')
+    }).length,
   }
 
   // Per-student summary (for weekly/monthly)
   const studentSummary = (sid: string) => {
     const days = index[sid] || {}
+    const vals = Object.values(days)
     return {
-      present: Object.values(days).filter((s) => s === 'present').length,
-      absent:  Object.values(days).filter((s) => s === 'absent').length,
-      late:    Object.values(days).filter((s) => s === 'late').length,
-      excused: Object.values(days).filter((s) => s === 'excused').length,
+      present: vals.filter((arr) => (arr || []).includes('present')).length,
+      absent:  vals.filter((arr) => (arr || []).includes('absent')).length,
+      late:    vals.filter((arr) => (arr || []).includes('late')).length,
     }
   }
 
@@ -150,20 +194,36 @@ export default function AdminAttendancePage() {
   const exportCSV = () => {
     if (records.length === 0) return
     const cls = classes.find((c) => c.id === classId)
+    const sub = subjects.find((s: any) => s.id === subjectId)
     const header = view === 'daily'
       ? ['Student', 'Status', 'Date']
-      : ['Student', ...activeDates.map(fmtShort), 'Present', 'Absent', 'Late', 'Excused']
+      : ['Student', ...activeDates.map(fmtShort), 'Present', 'Absent', 'Late']
 
     const rows = students.map((s) => {
       if (view === 'daily') {
-        const status = index[s.id]?.[dateRange.from] || '—'
+        const arr = index[s.id]?.[dateRange.from] || []
+        const status =
+          (arr.includes('absent') && 'Absent') ||
+          (attType === 'subject'
+            ? (arr.includes('present') && 'Present')
+            : (arr.includes('present') && arr.includes('late') ? 'Present + Late' :
+               (arr.includes('present') && 'Present'))) ||
+          (arr.includes('late') && 'Late') || '—'
         return [s.full_name, status, dateRange.from]
       }
       const sm = studentSummary(s.id)
       return [
         s.full_name,
-        ...activeDates.map((d) => index[s.id]?.[d] || '—'),
-        sm.present, sm.absent, sm.late, sm.excused,
+        ...activeDates.map((d) => {
+          const arr = index[s.id]?.[d] || []
+          return (arr.includes('absent') && 'A') ||
+                 (attType === 'subject'
+                   ? (arr.includes('present') && 'P')
+                   : (arr.includes('present') && arr.includes('late') && 'P+L') ||
+                     (arr.includes('present') && 'P')) ||
+                 (arr.includes('late') && 'L') || '—'
+        }),
+        sm.present, sm.absent, sm.late,
       ]
     })
 
@@ -172,7 +232,10 @@ export default function AdminAttendancePage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `attendance-${classLabel(cls || {})}-${dateRange.from}.csv`
+    const nameParts = [attType === 'subject' ? 'subject-attendance' : 'attendance', classLabel(cls || {})]
+    if (attType === 'subject' && sub) nameParts.push(String(sub.name || 'Subject'))
+    nameParts.push(dateRange.from)
+    a.download = `${nameParts.join('-')}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -200,6 +263,23 @@ export default function AdminAttendancePage() {
       {/* Controls */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
         <div className="flex flex-wrap gap-4 items-end">
+          {/* Type */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Type</label>
+            <div className="flex rounded-xl border border-gray-200 overflow-hidden">
+              {(['class','subject'] as AttType[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setAttType(t)}
+                  className={`px-4 py-2 text-sm font-medium capitalize transition-colors ${
+                    attType === t ? 'bg-teal-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
           {/* View mode */}
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">View</label>
@@ -231,6 +311,27 @@ export default function AdminAttendancePage() {
             </select>
           </div>
 
+          {/* Subject (only in subject view) */}
+          {attType === 'subject' && (
+            <div className="flex-1 min-w-[160px]">
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Subject</label>
+              <select
+                value={subjectId}
+                onChange={(e) => setSubjectId(e.target.value)}
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none"
+              >
+                {subjects.length === 0 ? (
+                  <option value="">Select a class to load subjects</option>
+                ) : (
+                  <>
+                    <option value="">No subject</option>
+                    {subjects.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </>
+                )}
+              </select>
+            </div>
+          )}
+
           {/* Date navigator */}
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Period</label>
@@ -258,12 +359,11 @@ export default function AdminAttendancePage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
         {[
           { key: 'present', label: 'Present',  icon: CheckCircle,  color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100' },
           { key: 'absent',  label: 'Absent',   icon: XCircle,      color: 'text-red-600',     bg: 'bg-red-50 border-red-100' },
           { key: 'late',    label: 'Late',      icon: Clock,        color: 'text-amber-600',   bg: 'bg-amber-50 border-amber-100' },
-          { key: 'excused', label: 'Excused',   icon: ShieldCheck,  color: 'text-sky-600',     bg: 'bg-sky-50 border-sky-100' },
         ].map(({ key, label, icon: Icon, color, bg }) => (
           <div key={key} className={`rounded-2xl border p-4 ${bg}`}>
             <div className="flex items-center justify-between mb-2">
@@ -301,8 +401,12 @@ export default function AdminAttendancePage() {
           </div>
           <div className="divide-y divide-gray-50">
             {students.map((student, idx) => {
-              const status = index[student.id]?.[dateRange.from]
-              if (!status && records.length > 0) return null // only show students with records for that day
+              const arr = index[student.id]?.[dateRange.from] || []
+              const key =
+                (arr.includes('absent') && 'absent') ||
+                (arr.includes('present') && arr.includes('late') && 'present-late') ||
+                (arr.includes('present') && 'present') ||
+                (arr.includes('late') && 'late') || ''
               return (
                 <div key={student.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50/60">
                   <span className="text-xs text-gray-400 w-5 text-right shrink-0">{idx + 1}</span>
@@ -314,10 +418,14 @@ export default function AdminAttendancePage() {
                     )}
                   </div>
                   <div className="flex-1 text-sm font-medium text-gray-900">{student.full_name}</div>
-                  {status ? (
-                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${STATUS_STYLES[status]?.bg} ${STATUS_STYLES[status]?.text}`}>
-                      {STATUS_STYLES[status]?.label}
-                    </span>
+                  {key ? (
+                    key === 'present-late' ? (
+                      <span className="px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">Present + Late</span>
+                    ) : (
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${STATUS_STYLES[key]?.bg} ${STATUS_STYLES[key]?.text}`}>
+                        {STATUS_STYLES[key]?.label}
+                      </span>
+                    )
                   ) : (
                     <span className="px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-400">No record</span>
                   )}
@@ -346,7 +454,6 @@ export default function AdminAttendancePage() {
                   <th className="px-3 py-3 text-center font-semibold text-emerald-600 min-w-[50px]">P</th>
                   <th className="px-3 py-3 text-center font-semibold text-red-500 min-w-[50px]">A</th>
                   <th className="px-3 py-3 text-center font-semibold text-amber-500 min-w-[50px]">L</th>
-                  <th className="px-3 py-3 text-center font-semibold text-sky-500 min-w-[50px]">E</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -368,13 +475,24 @@ export default function AdminAttendancePage() {
                         </div>
                       </td>
                       {activeDates.map((d) => {
-                        const s = index[student.id]?.[d]
+                        const arr = index[student.id]?.[d] || []
+                        const key =
+                          (arr.includes('absent') && 'absent') ||
+                          (arr.includes('present') && arr.includes('late') && 'present-late') ||
+                          (arr.includes('present') && 'present') ||
+                          (arr.includes('late') && 'late') || ''
                         return (
                           <td key={d} className="px-2 py-3 text-center">
-                            {s ? (
-                              <span className={`inline-block w-6 h-6 rounded-full text-xs font-bold leading-6 ${STATUS_STYLES[s]?.bg} ${STATUS_STYLES[s]?.text}`}>
-                                {s.charAt(0).toUpperCase()}
-                              </span>
+                            {key ? (
+                      key === 'present-late' ? (
+                                <span className={`inline-block px-1.5 h-6 rounded-full text-[10px] font-bold leading-6 bg-amber-100 text-amber-700`}>
+                                  P+L
+                                </span>
+                              ) : (
+                                <span className={`inline-block w-6 h-6 rounded-full text-xs font-bold leading-6 ${STATUS_STYLES[key]?.bg} ${STATUS_STYLES[key]?.text}`}>
+                                  {key.charAt(0).toUpperCase()}
+                                </span>
+                              )
                             ) : (
                               <span className="text-gray-200">·</span>
                             )}
@@ -384,7 +502,6 @@ export default function AdminAttendancePage() {
                       <td className="px-3 py-3 text-center font-semibold text-emerald-600">{sm.present || '—'}</td>
                       <td className="px-3 py-3 text-center font-semibold text-red-500">{sm.absent || '—'}</td>
                       <td className="px-3 py-3 text-center font-semibold text-amber-500">{sm.late || '—'}</td>
-                      <td className="px-3 py-3 text-center font-semibold text-sky-500">{sm.excused || '—'}</td>
                     </tr>
                   )
                 })}
@@ -396,7 +513,7 @@ export default function AdminAttendancePage() {
             <span><strong className="text-emerald-600">P</strong> Present</span>
             <span><strong className="text-red-500">A</strong> Absent</span>
             <span><strong className="text-amber-500">L</strong> Late</span>
-            <span><strong className="text-sky-500">E</strong> Excused</span>
+            {attType !== 'subject' && <span><strong className="text-amber-600">P+L</strong> Present + Late</span>}
           </div>
         </div>
       )}

@@ -575,8 +575,8 @@ export default function AdminClassesPage() {
                     const dept = (s as any).department || defaultDept || ''
                     const badgeClass =
                       dept === 'Science' ? 'bg-blue-100 text-blue-700' :
-                      dept === 'Humanities' ? 'bg-yellow-100 text-yellow-700' :
-                      dept === 'Arts' ? 'bg-purple-100 text-purple-700' :
+                      dept === 'Business' ? 'bg-yellow-100 text-yellow-700' :
+                      dept === 'Humanities' ? 'bg-purple-100 text-purple-700' :
                       'bg-gray-100 text-gray-700'
                     const ps = (s as any).payment_status || ''
                     const payClass =

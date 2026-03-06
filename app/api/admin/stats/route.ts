@@ -15,14 +15,14 @@ export async function GET() {
             supabaseAdmin.from('teachers').select('id', { count: 'exact', head: true }),
             supabaseAdmin.from('students').select('id', { count: 'exact', head: true }),
             supabaseAdmin.from('classes').select('id', { count: 'exact', head: true }),
-            supabaseAdmin.from('parents').select('id', { count: 'exact', head: true }),
+            supabaseAdmin.from('parents').select('id', { count: 'exact', head: true }).then(r => r).catch(() => ({ count: 0 })),
         ])
 
         return NextResponse.json({
             teachers: teachersRes.count ?? 0,
             students: studentsRes.count ?? 0,
             classes: classesRes.count ?? 0,
-            parents: parentsRes.count ?? 0,
+            parents: (parentsRes as any).count ?? 0,
         })
     } catch (e: any) {
         return NextResponse.json({ error: e?.message || 'Unexpected error' }, { status: 500 })

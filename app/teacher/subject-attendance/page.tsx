@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { UserCheck, BookOpen, Check, X, Clock, ChevronLeft, ChevronRight, Save, Download } from 'lucide-react'
+import { UserCheck, BookOpen, Check, ChevronLeft, ChevronRight, Save } from 'lucide-react'
 import type { AttendanceStatus } from '@/types/database'
 
 const STATUS_CONFIG: Record<AttendanceStatus, { label: string; color: string; ring: string; dot: string }> = {
@@ -22,21 +22,27 @@ function shiftDate(d: string, days: number) {
   return dt.toISOString().slice(0, 10)
 }
 
-export default function TeacherAttendancePage() {
+export default function SubjectAttendancePage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialClassId = searchParams.get('class_id') || ''
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savedMsg, setSavedMsg] = useState('')
   const [error, setError] = useState('')
 
+  const [teacherId, setTeacherId] = useState('')
   const [classes, setClasses] = useState<any[]>([])
-  const [selectedClass, setSelectedClass] = useState('')
+  const [subjects, setSubjects] = useState<any[]>([])
+  const [selectedClass, setSelectedClass] = useState(initialClassId)
+  const [selectedSubject, setSelectedSubject] = useState('')
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10))
   const [students, setStudents] = useState<any[]>([])
   const [entries, setEntries] = useState<Record<string, AttendanceStatus[]>>({})
   const [alreadySaved, setAlreadySaved] = useState(false)
 
-  // Load classes where this teacher is the class teacher
+  // Load classes where this teacher is assigned subjects
   useEffect(() => {
     ;(async () => {
       try {
@@ -48,27 +54,34 @@ export default function TeacherAttendancePage() {
 
         const { data: teacher } = await supabase.from('teachers').select('id').eq('user_id', user.id).single()
         if (!teacher) { setLoading(false); return }
+        setTeacherId(teacher.id)
 
-        // Only classes where this teacher is the class teacher
-        const { data: classTeacherClasses } = await supabase
-          .from('classes')
-          .select('id, name, class_level, department')
-          .eq('class_teacher_id', teacher.id)
-
-        // Also check legacy teacher_id
-        const { data: legacyClasses } = await supabase
-          .from('classes')
-          .select('id, name, class_level, department')
+        // Get class+subject assignments
+        const { data: cst } = await supabase
+          .from('class_subject_teachers')
+          .select('class_id, subject_id, classes(id, name, class_level), subjects(id, name)')
           .eq('teacher_id', teacher.id)
-          .not('class_teacher_id', 'eq', teacher.id) // avoid duplicates
 
-        const allClasses = [...(classTeacherClasses || []), ...(legacyClasses || [])]
-        // Deduplicate by id
-        const seen = new Set<string>()
-        const deduped = allClasses.filter((c) => { if (seen.has(c.id)) return false; seen.add(c.id); return true })
+        const classMap = new Map<string, any>()
+        for (const r of (cst || [])) {
+          const c = (r as any).classes
+          if (c) classMap.set(c.id, c)
+        }
+        setClasses(Array.from(classMap.values()))
 
-        setClasses(deduped)
-        if (deduped.length > 0) setSelectedClass(deduped[0].id)
+        // If initial class_id matches, select it
+        if (initialClassId && classMap.has(initialClassId)) {
+          setSelectedClass(initialClassId)
+        } else if (classMap.size > 0) {
+          setSelectedClass(Array.from(classMap.keys())[0])
+        }
+
+        // Store all assignments for subject filtering
+        setSubjects((cst || []).map((r: any) => ({
+          class_id: r.class_id,
+          subject_id: r.subject_id,
+          subject_name: (r as any).subjects?.name || '',
+        })))
       } catch {
         router.push('/auth/login')
       } finally {
@@ -77,19 +90,24 @@ export default function TeacherAttendancePage() {
     })()
   }, [])
 
-  // Load students when class changes (via server API to bypass RLS)
+  // Filter subjects when class changes
+  const classSubjects = subjects.filter((s) => s.class_id === selectedClass)
+
   useEffect(() => {
-    if (!selectedClass) { setStudents([]); return }
+    if (classSubjects.length > 0 && !classSubjects.some((s) => s.subject_id === selectedSubject)) {
+      setSelectedSubject(classSubjects[0].subject_id)
+    }
+  }, [selectedClass, subjects])
+
+  // Load students via server API to bypass RLS (teacher may not be class teacher)
+  useEffect(() => {
+    if (!selectedClass || !selectedSubject) { setStudents([]); return }
     ;(async () => {
       try {
-        const res = await fetch(`/api/teacher/class-students?class_id=${selectedClass}`)
+        const res = await fetch(`/api/teacher/subject-students?class_id=${selectedClass}&subject_id=${selectedSubject}`)
         if (!res.ok) { setStudents([]); return }
         const js = await res.json()
-        const list = (js.students || []).map((s: any) => ({
-          id: s.id,
-          full_name: s.full_name,
-          photo_url: s.photo_url,
-        }))
+        const list = (js.students || []) as any[]
         setStudents(list)
         const init: Record<string, AttendanceStatus[]> = {}
         for (const s of list) init[s.id] = []
@@ -98,13 +116,13 @@ export default function TeacherAttendancePage() {
         setStudents([])
       }
     })()
-  }, [selectedClass])
+  }, [selectedClass, selectedSubject])
 
-  // Load existing attendance for class+date
+  // Load existing subject attendance for class+subject+date
   useEffect(() => {
-    if (!selectedClass || !selectedDate || students.length === 0) return
+    if (!selectedClass || !selectedSubject || !selectedDate || students.length === 0) return
     ;(async () => {
-      const res = await fetch(`/api/attendance?class_id=${selectedClass}&date=${selectedDate}`)
+      const res = await fetch(`/api/subject-attendance?class_id=${selectedClass}&subject_id=${selectedSubject}&date=${selectedDate}`)
       const js = await res.json()
       const records: any[] = js.records || []
       if (records.length > 0) {
@@ -121,13 +139,12 @@ export default function TeacherAttendancePage() {
         })
       } else {
         setAlreadySaved(false)
-        // Reset to unmarked for all students on dates without saved records
         const init: Record<string, AttendanceStatus[]> = {}
         for (const s of students) init[s.id] = []
         setEntries(init)
       }
     })()
-  }, [selectedClass, selectedDate, students])
+  }, [selectedClass, selectedSubject, selectedDate, students])
 
   const toggleStatus = (studentId: string, status: AttendanceStatus) => {
     setEntries((prev) => {
@@ -136,13 +153,9 @@ export default function TeacherAttendancePage() {
       if (status === 'absent') {
         next = ['absent']
       } else {
-        // remove absent if toggling present/late
         next = next.filter((s) => s !== 'absent')
-        if (next.includes(status)) {
-          next = next.filter((s) => s !== status)
-        } else {
-          next.push(status)
-        }
+        if (next.includes(status)) next = next.filter((s) => s !== status)
+        else next.push(status)
       }
       return { ...prev, [studentId]: next }
     })
@@ -160,16 +173,17 @@ export default function TeacherAttendancePage() {
   }
 
   const handleSubmit = async () => {
-    if (!selectedClass || !selectedDate || students.length === 0) return
+    if (!selectedClass || !selectedSubject || !selectedDate || students.length === 0) return
     setSaving(true)
     setError('')
     setSavedMsg('')
     try {
-      const res = await fetch('/api/attendance', {
+      const res = await fetch('/api/subject-attendance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           class_id: selectedClass,
+          subject_id: selectedSubject,
           date: selectedDate,
           entries: students
             .map((s) => ({ student_id: s.id, statuses: entries[s.id] || [] }))
@@ -179,7 +193,7 @@ export default function TeacherAttendancePage() {
       const js = await res.json()
       if (!res.ok) { setError(js.error || 'Failed to save'); return }
       setAlreadySaved(true)
-      setSavedMsg('Attendance saved successfully!')
+      setSavedMsg('Subject attendance saved successfully!')
     } catch {
       setError('Failed to save attendance')
     } finally {
@@ -193,46 +207,10 @@ export default function TeacherAttendancePage() {
     late:    Object.values(entries).filter((arr) => (arr || []).includes('late')).length,
   }
 
-  const exportCSV = () => {
-    if (!selectedClass || students.length === 0) return
-    const header = ['Student', 'Status', 'Date']
-    const rows = students.map((s) => {
-      const arr = entries[s.id] || []
-      const status =
-        (arr.includes('absent') && 'Absent') ||
-        (arr.includes('present') && arr.includes('late') && 'Present + Late') ||
-        (arr.includes('present') && 'Present') ||
-        (arr.includes('late') && 'Late') || '—'
-      return [s.full_name, status, selectedDate]
-    })
-    const csv = [header, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `attendance-${classLabel(selectedClassObj || {})}-${selectedDate}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  const selectedClassObj = classes.find((c) => c.id === selectedClass)
+  const selectedClassObj = classes.find((c: any) => c.id === selectedClass)
   const classLabel = (c: any) => c.class_level || c.name || 'Class'
-  const todayStr = new Date().toISOString().slice(0, 10)
-  const isToday = selectedDate === todayStr
-  const isFuture = selectedDate > todayStr
-
-  // Auto-rollover to new day if the tab stays open across midnight
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const nowIso = new Date().toISOString().slice(0, 10)
-      if (nowIso !== todayStr) {
-        // Move to the new day; entries will load via existing effect
-        setSelectedDate(nowIso)
-        setSavedMsg('')
-      }
-    }, 60_000)
-    return () => clearInterval(interval)
-  }, [todayStr])
+  const selectedSubjectName = classSubjects.find((s) => s.subject_id === selectedSubject)?.subject_name || ''
+  const isToday = selectedDate === new Date().toISOString().slice(0, 10)
 
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600" /></div>
 
@@ -242,8 +220,8 @@ export default function TeacherAttendancePage() {
         <div className="w-20 h-20 bg-teal-50 rounded-full flex items-center justify-center mb-4">
           <UserCheck className="w-10 h-10 text-teal-400" />
         </div>
-        <h2 className="text-xl font-semibold text-gray-700 mb-2">No classes assigned</h2>
-        <p className="text-gray-500 text-sm max-w-sm">You have not been assigned as a class teacher for any class. Ask the admin to assign you as a class teacher.</p>
+        <h2 className="text-xl font-semibold text-gray-700 mb-2">No subject assignments</h2>
+        <p className="text-gray-500 text-sm max-w-sm">You have not been assigned to teach any subjects. Ask the admin to assign you subjects via class-subject-teacher assignments.</p>
       </div>
     )
   }
@@ -252,8 +230,8 @@ export default function TeacherAttendancePage() {
     <div className="max-w-4xl mx-auto">
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Attendance</h1>
-        <p className="text-gray-500 text-sm mt-1">Mark daily attendance for your class</p>
+        <h1 className="text-2xl font-bold text-gray-900">Subject Attendance</h1>
+        <p className="text-gray-500 text-sm mt-1">Mark attendance per subject for your assigned classes</p>
       </div>
 
       {/* Controls card */}
@@ -267,8 +245,22 @@ export default function TeacherAttendancePage() {
               onChange={(e) => setSelectedClass(e.target.value)}
               className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
             >
-              {classes.map((c) => (
+              {classes.map((c: any) => (
                 <option key={c.id} value={c.id}>{classLabel(c)}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Subject selector */}
+          <div className="flex-1 min-w-[160px]">
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Subject</label>
+            <select
+              value={selectedSubject}
+              onChange={(e) => setSelectedSubject(e.target.value)}
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
+            >
+              {classSubjects.map((s) => (
+                <option key={s.subject_id} value={s.subject_id}>{s.subject_name}</option>
               ))}
             </select>
           </div>
@@ -314,6 +306,7 @@ export default function TeacherAttendancePage() {
         {/* Date display */}
         <p className="mt-3 text-sm text-gray-600 flex items-center gap-2">
           <span className="font-medium">{fmtDate(selectedDate)}</span>
+          {selectedSubjectName && <span className="text-teal-600">— {selectedSubjectName}</span>}
           {alreadySaved && (
             <span className="inline-flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
               <Check className="w-3 h-3" /> Already saved
@@ -350,11 +343,9 @@ export default function TeacherAttendancePage() {
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-5">
             <div className="px-5 py-3 border-b border-gray-50 flex items-center justify-between">
               <span className="text-sm font-semibold text-gray-700">
-                {selectedClassObj ? classLabel(selectedClassObj) : ''} — {students.length} students
+                {selectedClassObj ? classLabel(selectedClassObj) : ''} — {selectedSubjectName} — {students.length} students
               </span>
-              <span className="text-xs text-gray-400">
-                {isFuture ? 'Future dates are not allowed' : 'Tap a status to toggle'}
-              </span>
+              <span className="text-xs text-gray-400">Tap a status to toggle</span>
             </div>
 
             <div className="divide-y divide-gray-50">
@@ -371,7 +362,6 @@ export default function TeacherAttendancePage() {
                   { label: 'Unmarked', cls: 'text-gray-400' }
                 return (
                   <div key={student.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50/60">
-                    {/* Index + photo */}
                     <span className="text-xs text-gray-400 w-5 text-right shrink-0">{idx + 1}</span>
                     <div className="w-9 h-9 rounded-full bg-gray-100 overflow-hidden shrink-0 flex items-center justify-center">
                       {student.photo_url ? (
@@ -382,14 +372,10 @@ export default function TeacherAttendancePage() {
                         </span>
                       )}
                     </div>
-
-                    {/* Name + status dot */}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-900 truncate">{student.full_name}</p>
                       <p className={`text-xs font-medium mt-0.5 ${display.cls}`}>{display.label}</p>
                     </div>
-
-                    {/* Status buttons */}
                     <div className="flex gap-1.5 shrink-0">
                       {(['present','absent','late'] as AttendanceStatus[]).map((s) => {
                         const c = STATUS_CONFIG[s]
@@ -397,14 +383,13 @@ export default function TeacherAttendancePage() {
                         return (
                           <button
                             key={s}
-                            onClick={() => !isFuture && toggleStatus(student.id, s)}
+                            onClick={() => toggleStatus(student.id, s)}
                             title={c.label}
                             className={`w-8 h-8 rounded-lg border text-xs font-bold transition-all ${
                               active
                                 ? `${c.color} shadow-sm ring-2 ${c.ring}`
-                                : `border-gray-200 ${isFuture ? 'text-gray-300 bg-gray-50' : 'text-gray-400 hover:border-gray-300 bg-white'}`
+                                : 'border-gray-200 text-gray-400 hover:border-gray-300 bg-white'
                             }`}
-                            disabled={isFuture}
                           >
                             {s === 'present' ? 'P' : s === 'absent' ? 'A' : 'L'}
                           </button>
@@ -428,20 +413,13 @@ export default function TeacherAttendancePage() {
           <div className="flex items-center gap-3 pb-8">
             <button
               onClick={handleSubmit}
-              disabled={saving || isFuture}
+              disabled={saving}
               className="flex items-center gap-2 px-6 py-3 bg-teal-600 text-white rounded-xl font-semibold hover:bg-teal-700 disabled:opacity-50 shadow-sm shadow-teal-200 transition-all"
             >
               <Save className="w-4 h-4" />
               {saving ? 'Saving...' : alreadySaved ? 'Update Attendance' : 'Submit Attendance'}
             </button>
-            <button
-              onClick={exportCSV}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 shadow-sm"
-              title="Export CSV"
-            >
-              <Download className="w-4 h-4" /> Export CSV
-            </button>
-              <span className="text-sm text-gray-400">
+            <span className="text-sm text-gray-400">
               {summary.present} present · {summary.absent} absent · {summary.late} late
             </span>
           </div>
