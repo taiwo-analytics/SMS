@@ -64,18 +64,9 @@ export default function AdminAttendancePage() {
     })
   }, [])
 
+  // Load subjects when class changes
   useEffect(() => {
-    if (!classId) { setStudents([]); return }
-    supabase
-      .from('class_enrollments')
-      .select('student_id, students(id, full_name, photo_url)')
-      .eq('class_id', classId)
-      .then(({ data }) => {
-        const list = (data || []).map((e: any) => e.students).filter(Boolean)
-          .sort((a: any, b: any) => a.full_name.localeCompare(b.full_name))
-        setStudents(list)
-      })
-    // Load subjects for selected class (for subject attendance)
+    if (!classId) { setSubjects([]); setSubjectId(''); return }
     supabase
       .from('class_subject_teachers')
       .select('subject_id, subjects(id, name, code)')
@@ -84,10 +75,26 @@ export default function AdminAttendancePage() {
         const subs = (data || []).map((r: any) => r.subjects).filter(Boolean)
           .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''))
         setSubjects(subs)
-        // Default to "No subject" until admin chooses one
         setSubjectId('')
       })
   }, [classId])
+
+  // Load students via server API (handles department filtering for subject attendance)
+  useEffect(() => {
+    if (!classId) { setStudents([]); return }
+    ;(async () => {
+      try {
+        const params = new URLSearchParams({ class_id: classId })
+        if (attType === 'subject' && subjectId) params.set('subject_id', subjectId)
+        const res = await fetch(`/api/admin/subject-students?${params}`)
+        if (!res.ok) { setStudents([]); return }
+        const js = await res.json()
+        setStudents(js.students || [])
+      } catch {
+        setStudents([])
+      }
+    })()
+  }, [classId, attType, subjectId])
 
   useEffect(() => {
     fetchAttendance()
