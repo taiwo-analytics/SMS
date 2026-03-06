@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { getSupabaseAdmin } from '@/lib/supabase/admin'
 import { getGrade } from '@/lib/gradeScale'
 
 async function getCallerInfo(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>) {
@@ -83,10 +84,23 @@ export async function GET(req: NextRequest) {
   const { data: scores, error } = await scoresQuery
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Fetch enrolled students for the class
-  const { data: enrollments } = await supabase
+  const admin = getSupabaseAdmin()
+  const norm = (s: any) => String(s || '').trim().toLowerCase()
+
+  // Fetch class info for department resolution
+  const { data: classInfo } = await admin
+    .from('classes')
+    .select('id, class_level, department')
+    .eq('id', class_id)
+    .maybeSingle()
+  const classLevel = String((classInfo as any)?.class_level || '').toUpperCase()
+  const isSenior = classLevel.startsWith('SS')
+  const classDeptNorm = norm((classInfo as any)?.department)
+
+  // Fetch enrolled students with department info
+  const { data: enrollments } = await admin
     .from('class_enrollments')
-    .select('student_id, students(id, full_name)')
+    .select('student_id, department, students(id, full_name, department)')
     .eq('class_id', class_id)
 
   // Fetch subjects for the class
@@ -99,13 +113,6 @@ export async function GET(req: NextRequest) {
   }
   const { data: classSubjects } = await subjectsQuery
 
-  // Build unique students list
-  const studentsMap = new Map<string, string>()
-  for (const e of (enrollments || [])) {
-    const s = e.students as any
-    if (s) studentsMap.set(s.id, s.full_name)
-  }
-
   // Build unique subjects list
   const subjectsMap = new Map<string, { id: string; name: string; code?: string }>()
   for (const cs of (classSubjects || [])) {
@@ -116,6 +123,59 @@ export async function GET(req: NextRequest) {
   for (const sc of (scores || [])) {
     const sub = sc.subjects as any
     if (sub && !subjectsMap.has(sub.id)) subjectsMap.set(sub.id, sub)
+  }
+
+  // Fetch department restrictions for all subjects in view
+  const subjectIds = Array.from(subjectsMap.keys())
+  const subjectDeptsMap = new Map<string, string[]>() // subject_id -> department list
+  if (subjectIds.length > 0 && isSenior) {
+    const { data: subjectRows } = await admin
+      .from('subjects')
+      .select('id, departments, department')
+      .in('id', subjectIds)
+    for (const s of (subjectRows || [])) {
+      let depts: string[] = []
+      if (Array.isArray((s as any).departments) && (s as any).departments.length > 0) {
+        depts = (s as any).departments
+      } else if ((s as any).department) {
+        depts = String((s as any).department).split(';').map((d: string) => d.trim()).filter(Boolean)
+      }
+      if (depts.length > 0) subjectDeptsMap.set(s.id, depts)
+    }
+  }
+
+  // Resolve each enrollment's department and build student list
+  // For SS classes with dept-restricted subjects, filter students accordingly
+  const enrollmentDepts = new Map<string, string>() // student_id -> resolved dept
+  const studentsMap = new Map<string, string>()
+
+  // Check if ANY subject in view has department restrictions
+  const anySubjectHasDepts = subjectDeptsMap.size > 0
+
+  for (const e of (enrollments || [])) {
+    const s = (e as any).students
+    if (!s) continue
+    const resolved = norm((e as any).department) || norm(s.department) || classDeptNorm
+    enrollmentDepts.set(s.id, resolved)
+
+    if (!isSenior || !anySubjectHasDepts) {
+      // JSS or no dept-restricted subjects: show all students
+      studentsMap.set(s.id, s.full_name)
+    } else {
+      // SS with dept-restricted subjects: include student if they match at least one subject's department
+      // or if there are core subjects (no dept restriction) in the view
+      const hasCoreSubject = subjectIds.some((sid) => !subjectDeptsMap.has(sid))
+      if (hasCoreSubject) {
+        studentsMap.set(s.id, s.full_name)
+      } else if (resolved) {
+        // Only include if student's dept matches at least one subject
+        const matches = Array.from(subjectDeptsMap.values()).some((depts) =>
+          depts.some((d) => norm(d) === resolved)
+        )
+        if (matches) studentsMap.set(s.id, s.full_name)
+      }
+      // If resolved is empty and all subjects have dept restrictions, student is excluded
+    }
   }
 
   // Index scores by student+subject

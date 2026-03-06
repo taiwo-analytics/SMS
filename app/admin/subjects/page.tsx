@@ -9,6 +9,8 @@ type Subject = {
   id: string
   name: string
   code?: string | null
+  departments?: string[] | null
+  department?: string | null
   created_at: string
 }
 
@@ -283,26 +285,107 @@ export default function AdminSubjectsPage() {
         </div>
       </div>
 
-      {/* No intermediate tables; only one overview table below */}
+      {/* All Subjects */}
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="p-4 border-b">
+          <h3 className="text-lg font-semibold">All Subjects</h3>
+          <p className="text-sm text-gray-600">Manage subjects and their department assignments. Department-specific subjects only show matching students for SS classes.</p>
+        </div>
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Department</th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {subjects.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-6 py-10 text-center text-gray-500">
+                  No subjects yet. Click "Add Subject" to create one.
+                </td>
+              </tr>
+            ) : (
+              subjects.map((s) => {
+                const depts = Array.isArray(s.departments) && s.departments.length > 0
+                  ? s.departments
+                  : s.department
+                    ? String(s.department).split(';').map((d) => d.trim()).filter(Boolean)
+                    : []
+                return (
+                  <tr key={s.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{s.name}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-500">{s.code || '—'}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      {depts.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {depts.map((d) => (
+                            <span key={d} className="px-2 py-0.5 text-xs font-medium bg-indigo-50 text-indigo-700 rounded-full">{d}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-400">Core (all students)</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => {
+                            setEditingSubject(s)
+                            setSubjectForm({
+                              name: s.name,
+                              code: s.code || '',
+                              departments: depts,
+                            })
+                            setShowSubjectModal(true)
+                          }}
+                          className="text-blue-500 hover:text-blue-700"
+                          title="Edit subject"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSubject(s.id)}
+                          className="text-red-400 hover:text-red-600"
+                          title="Delete subject"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
 
+      {/* Assignment Overview */}
       <div className="mt-6 bg-white rounded-lg shadow overflow-hidden">
         <div className="p-4 border-b">
-          <h3 className="text-lg font-semibold">Subject Overview</h3>
-          <p className="text-sm text-gray-600">Subject list with teacher assignments and totals.</p>
+          <h3 className="text-lg font-semibold">Assignment Overview</h3>
+          <p className="text-sm text-gray-600">Subject-teacher assignment summary.</p>
         </div>
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Teachers</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Links</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {overviewRows.length === 0 ? (
               <tr>
                 <td colSpan={3} className="px-6 py-10 text-center text-gray-500">
-                  No data yet.
+                  No assignments yet.
                 </td>
               </tr>
             ) : (

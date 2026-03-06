@@ -65,15 +65,15 @@ export async function GET(req: Request) {
     let students = (enrollments || [])
       .filter((e: any) => {
         if (!e.students) return false
-        // If no subject or subject has no department restriction, show all students
-        if (subjectDepts.length === 0) {
-          const sd0 = norm(e.department || (e.students?.department))
-          if (isSenior && classDeptNorm) return sd0 === classDeptNorm
-          return true
-        }
-        const sd = norm(e.department || (e.students?.department))
-        if (!sd) return false
-        return subjectDepts.some((d) => norm(d) === sd)
+        // Core subject (no department restriction) → show all students
+        if (subjectDepts.length === 0) return true
+        // JSS classes have no department system
+        if (!isSenior) return true
+        // Resolve student department: enrollment → student record → class-level
+        const resolved = norm(e.department) || norm(e.students?.department) || classDeptNorm
+        // If we can't determine the student's department, exclude them for dept-restricted subjects
+        if (!resolved) return false
+        return subjectDepts.some((d) => norm(d) === resolved)
       })
       .map((e: any) => e.students)
       .sort((a: any, b: any) => (a.full_name || '').localeCompare(b.full_name || ''))

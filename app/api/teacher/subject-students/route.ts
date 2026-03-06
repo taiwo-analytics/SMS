@@ -37,6 +37,16 @@ export async function GET(req: Request) {
 
     const admin = getSupabaseAdmin()
 
+    const norm = (s: any) => String(s || '').trim().toLowerCase()
+    const { data: cls } = await admin
+      .from('classes')
+      .select('id, class_level, department')
+      .eq('id', classId)
+      .maybeSingle()
+    const lvl = String((cls as any)?.class_level || '').toUpperCase()
+    const isSenior = lvl.startsWith('SS')
+    const classDeptNorm = norm((cls as any)?.department)
+
     // Check if the subject is department-specific
     const { data: subject } = await admin
       .from('subjects')
@@ -57,18 +67,21 @@ export async function GET(req: Request) {
     // Fetch students enrolled in the class (include enrollment department)
     const { data: enrollments } = await admin
       .from('class_enrollments')
-      .select('student_id, department, students(id, full_name, gender, photo_url)')
+      .select('student_id, department, students(id, full_name, gender, photo_url, department)')
       .eq('class_id', classId)
 
     let students = (enrollments || [])
       .filter((e: any) => {
         if (!e.students) return false
-        // If subject has no department restriction, show all students (core subject)
+        // Core subject (no department restriction) → show all students
         if (subjectDepts.length === 0) return true
-        // Filter: only students whose enrollment department matches one of the subject's departments
-        const studentDept = (e.department || '').trim()
-        if (!studentDept) return true // students with no department see all subjects
-        return subjectDepts.some((d) => d.toLowerCase() === studentDept.toLowerCase())
+        // JSS classes have no department system
+        if (!isSenior) return true
+        // Resolve student department: enrollment → student record → class-level
+        const resolved = norm(e.department) || norm(e.students?.department) || classDeptNorm
+        // If we can't determine the student's department, exclude them for dept-restricted subjects
+        if (!resolved) return false
+        return subjectDepts.some((d) => norm(d) === resolved)
       })
       .map((e: any) => e.students)
       .sort((a: any, b: any) => (a.full_name || '').localeCompare(b.full_name || ''))
