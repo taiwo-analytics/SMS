@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic'
 import ParentLayout from '@/components/ParentLayout'
 import type { ReactNode } from 'react'
 

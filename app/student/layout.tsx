@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic'
 import StudentLayout from '@/components/StudentLayout'
 import type { ReactNode } from 'react'
 
