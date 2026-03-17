@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function TeacherClassDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter()
@@ -82,7 +83,7 @@ export default function TeacherClassDetailPage({ params }: { params: { id: strin
     }
   }
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+  if (loading) return <SchoolLoader />
 
   return (
     <div className="max-w-4xl mx-auto">

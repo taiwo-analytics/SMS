@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase/admin'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { cookies } from 'next/headers'
 
 export const runtime = 'nodejs'
 
@@ -14,7 +13,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Missing class_id or subject_id' }, { status: 400 })
     }
 
-    const supabase = await createServerSupabaseClient(cookies())
+    const supabase = await createServerSupabaseClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -45,24 +44,26 @@ export async function GET(req: Request) {
       .maybeSingle()
     const lvl = String((cls as any)?.class_level || '').toUpperCase()
     const isSenior = lvl.startsWith('SS')
-    const classDeptNorm = norm((cls as any)?.department)
+    let classDeptNorm = norm((cls as any)?.department)
+    if (classDeptNorm === 'arts') classDeptNorm = 'humanities'
 
     // Check if the subject is department-specific
-    const { data: subject } = await admin
+    const { data: subject, error: subjectError } = await admin
       .from('subjects')
-      .select('id, departments, department')
+      .select('*')
       .eq('id', subjectId)
-      .single()
+      .maybeSingle()
 
     // Resolve subject departments (array field or semicolon-separated fallback)
     let subjectDepts: string[] = []
-    if (subject) {
-      if (Array.isArray((subject as any).departments) && (subject as any).departments.length > 0) {
-        subjectDepts = (subject as any).departments
-      } else if ((subject as any).department) {
-        subjectDepts = String((subject as any).department).split(';').map((d: string) => d.trim()).filter(Boolean)
-      }
+    if (subject && Array.isArray((subject as any).departments)) {
+      subjectDepts = (subject as any).departments
     }
+    subjectDepts = subjectDepts.map((d) => {
+      const n = norm(d)
+      if (n === 'arts') return 'humanities'
+      return n
+    }).filter((n) => ['science', 'business', 'humanities'].includes(n))
 
     // Fetch students enrolled in the class (include enrollment department)
     const { data: enrollments } = await admin
@@ -78,7 +79,8 @@ export async function GET(req: Request) {
         // JSS classes have no department system
         if (!isSenior) return true
         // Resolve student department: enrollment → student record → class-level
-        const resolved = norm(e.department) || norm(e.students?.department) || classDeptNorm
+        let resolved = norm(e.department) || norm(e.students?.department) || classDeptNorm
+        if (resolved === 'arts') resolved = 'humanities'
         // If we can't determine the student's department, exclude them for dept-restricted subjects
         if (!resolved) return false
         return subjectDepts.some((d) => norm(d) === resolved)
@@ -86,7 +88,26 @@ export async function GET(req: Request) {
       .map((e: any) => e.students)
       .sort((a: any, b: any) => (a.full_name || '').localeCompare(b.full_name || ''))
 
-    return NextResponse.json({ students })
+    return NextResponse.json({
+      students,
+      _debug: {
+        classId,
+        subjectId,
+        isSenior,
+        classDeptNorm,
+        subjectDepts,
+        subjectRaw: subject,
+        subjectError: subjectError?.message || null,
+        totalEnrollments: (enrollments || []).length,
+        filteredCount: students.length,
+        enrollmentSample: (enrollments || []).slice(0, 5).map((e: any) => ({
+          student_name: e.students?.full_name,
+          enrollment_dept: e.department,
+          student_dept: e.students?.department,
+          resolved: norm(e.department) || norm(e.students?.department) || classDeptNorm,
+        })),
+      },
+    })
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || 'Unexpected error' }, { status: 500 })
   }

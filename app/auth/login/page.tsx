@@ -1,8 +1,10 @@
 'use client'
 
+import type { FormEvent } from 'react'
 import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
+import SchoolLoader from '@/components/SchoolLoader'
 
 function LoginContent() {
   const router = useRouter()
@@ -12,7 +14,7 @@ function LoginContent() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError('')
@@ -132,7 +134,7 @@ function LoginContent() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+    <Suspense fallback={<SchoolLoader />}>
       <LoginContent />
     </Suspense>
   )

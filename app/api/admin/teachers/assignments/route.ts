@@ -94,7 +94,9 @@ export async function POST(req: Request) {
       }
       let departmentsToUse: string[] | null = null
       if (Array.isArray(departments) && departments.length) {
-        departmentsToUse = departments.map((d: string) => String(d).trim()).filter(Boolean)
+        departmentsToUse = departments
+          .map((d: string) => String(d).trim())
+          .filter(Boolean)
       } else if (department && String(department).trim() !== '') {
         departmentsToUse = [String(department).trim()]
       } else {
@@ -113,7 +115,22 @@ export async function POST(req: Request) {
         departmentsToUse = fromArray.length ? fromArray : null
       }
       if (departmentsToUse && departmentsToUse.length) {
-        query = query.in('department', departmentsToUse)
+        const norm = (s: any) => String(s || '').trim().toLowerCase()
+        departmentsToUse = departmentsToUse
+          .map((d) => {
+            const n = norm(d)
+            if (n === 'arts') return 'humanities'
+            return n
+          })
+          .filter((n) => ['science', 'business', 'humanities'].includes(n))
+      }
+      if (departmentsToUse && departmentsToUse.length) {
+        query = query.in('department', departmentsToUse.map((n) => {
+          if (n === 'science') return 'Science'
+          if (n === 'business') return 'Business'
+          if (n === 'humanities') return 'Humanities'
+          return n
+        }))
       }
       const { data: classes, error: cErr } = await query
       if (cErr) {

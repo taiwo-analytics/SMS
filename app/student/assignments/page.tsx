@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { ClipboardList, ArrowLeft, BookOpen, Calendar, Clock } from 'lucide-react'
 import { Assignment, Class } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function StudentAssignmentsPage() {
   const router = useRouter()
@@ -78,7 +79,7 @@ export default function StudentAssignmentsPage() {
   const past = filteredAssignments.filter(a => !a.due_date || new Date(a.due_date) < now)
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

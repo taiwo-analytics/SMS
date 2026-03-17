@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function ReportCardPage() {
   const params = useParams()
@@ -59,7 +60,7 @@ export default function ReportCardPage() {
   const subjects = useMemo(() => report?.subjects || [], [report])
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

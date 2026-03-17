@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Shield, GraduationCap, User, BookOpen, Users, Calendar, Clock, MapPin, BarChart3 } from 'lucide-react'
 import { Event } from '@/types/events'
+import SchoolLoader from '@/components/SchoolLoader'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell,
 } from 'recharts'
@@ -283,75 +284,91 @@ export default function AdminDashboard() {
 
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (
     <div>
       <div className="mb-8">
         <div className="flex items-center gap-4 mb-2">
-          <Shield className="w-10 h-10 text-blue-600" />
-          <h2 className="text-3xl font-bold text-gray-900">Administration Dashboard</h2>
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-600 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-200">
+            <Shield className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-extrabold bg-gradient-to-r from-gray-900 via-gray-800 to-gray-600 bg-clip-text text-transparent">Administration Dashboard</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Overview of your school&apos;s administration, teachers, students, and classes.
+            </p>
+          </div>
         </div>
-        <p className="text-gray-600">
-          Overview of your school&apos;s administration, teachers, students, and classes.
-        </p>
       </div>
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      {/* Statistics Cards - Gradient */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
         <div
           onClick={() => router.push('/admin/teachers')}
-          className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-blue-500"
+          className="relative overflow-hidden rounded-2xl p-6 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-xl bg-gradient-to-br from-blue-500 to-blue-700 shadow-lg shadow-blue-200/50 group"
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Total Teachers</p>
-              <p className="text-3xl font-bold text-gray-900">{stats.teachers}</p>
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white/10 rounded-full blur-lg group-hover:scale-150 transition-transform duration-500" />
+          <div className="relative">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center backdrop-blur-sm">
+                <GraduationCap className="w-6 h-6 text-white" />
+              </div>
             </div>
-            <GraduationCap className="w-12 h-12 text-blue-500" />
+            <p className="text-3xl font-extrabold text-white">{stats.teachers}</p>
+            <p className="text-sm text-blue-100 mt-1 font-medium">Total Teachers</p>
           </div>
         </div>
 
         <div
           onClick={() => router.push('/admin/students')}
-          className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-green-500"
+          className="relative overflow-hidden rounded-2xl p-6 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-xl bg-gradient-to-br from-emerald-500 to-emerald-700 shadow-lg shadow-emerald-200/50 group"
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Total Students</p>
-              <p className="text-3xl font-bold text-gray-900">{stats.students}</p>
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white/10 rounded-full blur-lg group-hover:scale-150 transition-transform duration-500" />
+          <div className="relative">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center backdrop-blur-sm">
+                <User className="w-6 h-6 text-white" />
+              </div>
             </div>
-            <User className="w-12 h-12 text-green-500" />
+            <p className="text-3xl font-extrabold text-white">{stats.students}</p>
+            <p className="text-sm text-emerald-100 mt-1 font-medium">Total Students</p>
           </div>
         </div>
 
         <div
           onClick={() => router.push('/admin/classes')}
-          className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-purple-500"
+          className="relative overflow-hidden rounded-2xl p-6 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-xl bg-gradient-to-br from-violet-500 to-purple-700 shadow-lg shadow-violet-200/50 group"
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Total Classes</p>
-              <p className="text-3xl font-bold text-gray-900">{stats.classes}</p>
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white/10 rounded-full blur-lg group-hover:scale-150 transition-transform duration-500" />
+          <div className="relative">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center backdrop-blur-sm">
+                <BookOpen className="w-6 h-6 text-white" />
+              </div>
             </div>
-            <BookOpen className="w-12 h-12 text-purple-500" />
+            <p className="text-3xl font-extrabold text-white">{stats.classes}</p>
+            <p className="text-sm text-violet-100 mt-1 font-medium">Total Classes</p>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow border-l-4 border-orange-500">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Total Parents</p>
-              <p className="text-3xl font-bold text-gray-900">{stats.parents}</p>
+        <div className="relative overflow-hidden rounded-2xl p-6 transition-all duration-300 hover:scale-[1.02] hover:shadow-xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-amber-200/50 group">
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white/10 rounded-full blur-lg group-hover:scale-150 transition-transform duration-500" />
+          <div className="relative">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center backdrop-blur-sm">
+                <Users className="w-6 h-6 text-white" />
+              </div>
             </div>
-            <Users className="w-12 h-12 text-orange-500" />
+            <p className="text-3xl font-extrabold text-white">{stats.parents}</p>
+            <p className="text-sm text-amber-100 mt-1 font-medium">Total Parents</p>
           </div>
         </div>
       </div>
 
       {/* Attendance Overview Chart */}
-      <div className="bg-white rounded-lg shadow p-6 mb-8">
+      <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-6 mb-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div className="flex items-center gap-2">
             <BarChart3 className="w-6 h-6 text-blue-600" />
@@ -506,7 +523,7 @@ export default function AdminDashboard() {
       </div>
 
       {/* Upcoming Events */}
-      <div className="bg-white rounded-lg shadow p-6 mb-6">
+      <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Calendar className="w-6 h-6 text-blue-600" />

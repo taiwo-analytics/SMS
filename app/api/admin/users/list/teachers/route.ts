@@ -45,7 +45,7 @@ export async function GET() {
         ? supabaseAdmin.from('subjects').select('id, name, code').in('id', subjectIdsForSubjects)
         : Promise.resolve({ data: [] as any[] }),
       classIdsForSubjects.length
-        ? supabaseAdmin.from('classes').select('id, name, class_level').in('id', classIdsForSubjects)
+        ? supabaseAdmin.from('classes').select('id, name, class_level, department').in('id', classIdsForSubjects)
         : Promise.resolve({ data: [] as any[] }),
     ])
 
@@ -61,8 +61,12 @@ export async function GET() {
       }
     }
 
-    const subjectMap = new Map((subjectRows || []).map((s: any) => [s.id, s]))
-    const classMapForSubjects = new Map((classRowsForSubjects || []).map((c: any) => [c.id, c]))
+    const subjectMap = new Map<string, { id: string; name: string; code?: string | null }>(
+      (subjectRows || []).map((s: any) => [s.id, s])
+    )
+    const classMapForSubjects = new Map<string, { id: string; name: string; class_level?: string | null; department?: string | null }>(
+      (classRowsForSubjects || []).map((c: any) => [c.id, c])
+    )
 
     const teachersWithDetails = (teachers || []).map((teacher: any) => {
       const subjectAssignments = (classSubjectTeachers || [])
@@ -71,7 +75,7 @@ export async function GET() {
           const subject = subjectMap.get(row.subject_id)
           const cls = classMapForSubjects.get(row.class_id)
           const classLabel = cls
-            ? `${cls.class_level || cls.name}${cls.class_level || cls.name ? (cls.department ? ` - ${cls.department}` : '') : ''}`
+            ? `${cls.class_level || cls.name}${cls.department ? ` - ${cls.department}` : ''}`
             : 'Unknown class'
           const subjectLabel = subject
             ? `${subject.name}${subject.code ? ` (${subject.code})` : ''}`

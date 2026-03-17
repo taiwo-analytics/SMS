@@ -1,9 +1,12 @@
  'use client'
  
+ import { Suspense } from 'react'
+ import type { FormEvent } from 'react'
  import { useState } from 'react'
  import { useRouter, useSearchParams } from 'next/navigation'
+ import SchoolLoader from '@/components/SchoolLoader'
  
- export default function FirstAdminSetupPage() {
+function FirstAdminSetupContent() {
    const router = useRouter()
    const searchParams = useSearchParams()
  
@@ -15,7 +18,7 @@
    const [error, setError] = useState<string | null>(null)
    const [success, setSuccess] = useState(false)
  
-   const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
      e.preventDefault()
      setError(null)
      setSuccess(false)
@@ -60,7 +63,7 @@
        setLoading(false)
      }
    }
- 
+
    return (
      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
        <div className="w-full max-w-md bg-white rounded-xl shadow border border-gray-100 p-8">
@@ -166,4 +169,12 @@
      </div>
    )
  }
+
+export default function FirstAdminSetupPage() {
+  return (
+    <Suspense fallback={<SchoolLoader />}>
+      <FirstAdminSetupContent />
+    </Suspense>
+  )
+}
  

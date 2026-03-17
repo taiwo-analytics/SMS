@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase/admin'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { cookies } from 'next/headers'
 
 export const runtime = 'nodejs'
 
@@ -13,7 +12,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing class_id or student_id' }, { status: 400 })
     }
 
-    const supabase = await createServerSupabaseClient(cookies())
+    const supabase = await createServerSupabaseClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 

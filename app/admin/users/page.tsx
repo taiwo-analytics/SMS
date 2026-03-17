@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { UserCheck, Shield, GraduationCap, User, Users, Search, Edit, Trash2, Link2, X, Plus, KeyRound } from 'lucide-react'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true)
@@ -196,7 +197,7 @@ export default function AdminUsersPage() {
   })
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

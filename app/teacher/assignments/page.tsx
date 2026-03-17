@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { ClipboardList, BookOpen, Plus, Trash2, X, Calendar } from 'lucide-react'
 import { Class, Assignment } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function TeacherAssignmentsPage() {
   const router = useRouter()
@@ -127,7 +128,7 @@ export default function TeacherAssignmentsPage() {
   }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

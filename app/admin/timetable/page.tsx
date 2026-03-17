@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Clock, Plus, Trash2, X, Pencil } from 'lucide-react'
 import { Class, Teacher, Timetable } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const TIME_SLOTS = [
@@ -20,6 +21,10 @@ export default function AdminTimetablePage() {
   const [classes, setClasses] = useState<Class[]>([])
   const [teachers, setTeachers] = useState<Teacher[]>([])
   const [selectedClass, setSelectedClass] = useState<string>('')
+  const [sessions, setSessions] = useState<any[]>([])
+  const [terms, setTerms] = useState<any[]>([])
+  const [selectedSession, setSelectedSession] = useState<string>('')
+  const [selectedTerm, setSelectedTerm] = useState<string>('')
   const [showModal, setShowModal] = useState(false)
   const [editingEntry, setEditingEntry] = useState<Timetable | null>(null)
   const [formData, setFormData] = useState({
@@ -65,6 +70,26 @@ export default function AdminTimetablePage() {
     } finally {
       setLoading(false)
     }
+    // Load sessions/terms for filter
+    try {
+      const { data: sessionsData } = await supabase
+        .from('academic_sessions')
+        .select('id, name, is_active')
+        .order('created_at', { ascending: false })
+      setSessions(sessionsData || [])
+      const activeSession = (sessionsData || []).find((s: any) => s.is_active) || (sessionsData || [])[0]
+      setSelectedSession(activeSession?.id || '')
+      if (activeSession?.id) {
+        const { data: termsData } = await supabase
+          .from('academic_terms')
+          .select('id, name, is_active, session_id')
+          .eq('session_id', activeSession.id)
+          .order('created_at', { ascending: false })
+        setTerms(termsData || [])
+        const activeTerm = (termsData || []).find((t: any) => t.is_active) || (termsData || [])[0]
+        setSelectedTerm(activeTerm?.id || '')
+      }
+    } catch {}
   }, [])
 
   const loadData = useCallback(async () => {
@@ -96,21 +121,33 @@ export default function AdminTimetablePage() {
 
   const loadEntries = useCallback(async () => {
     try {
-      const { data, error } = await supabase
+      let q = supabase
         .from('timetables')
         .select('*')
         .eq('class_id', selectedClass)
         .order('start_time')
-      if (error) throw error
-      setEntries(data || [])
+      q = q.or(`term_id.eq.${selectedTerm},term_id.is.null`)
+      const { data, error } = await q
+      if (error && /term_id/i.test(String(error.message || ''))) {
+        const { data: fallbackData, error: fbErr } = await supabase
+          .from('timetables')
+          .select('*')
+          .eq('class_id', selectedClass)
+          .order('start_time')
+        if (fbErr) throw fbErr
+        setEntries(fallbackData || [])
+      } else {
+        if (error) throw error
+        setEntries(data || [])
+      }
     } catch (error) {
       console.error('Error loading timetable:', error)
     }
-  }, [selectedClass])
+  }, [selectedClass, selectedTerm])
 
   useEffect(() => { checkAuth() }, [checkAuth])
   useEffect(() => { if (!loading) loadData() }, [loading, loadData])
-  useEffect(() => { if (selectedClass) loadEntries() }, [selectedClass, loadEntries])
+  useEffect(() => { if (selectedClass) loadEntries() }, [selectedClass, selectedTerm, loadEntries])
 
  
 
@@ -133,6 +170,7 @@ export default function AdminTimetablePage() {
         class_id: formData.class_id,
         subject: formData.subject || null,
         teacher_id: formData.teacher_id || null,
+        term_id: selectedTerm || null,
         day_of_week: formData.day_of_week,
         start_time: formData.start_time,
         end_time: finalEnd,
@@ -195,6 +233,7 @@ export default function AdminTimetablePage() {
           class_id: formData.class_id,
           subject: formData.subject || null,
           teacher_id: formData.teacher_id || null,
+          term_id: selectedTerm || null,
           day_of_week: formData.day_of_week,
           start_time: formData.start_time,
           end_time: finalEnd,
@@ -326,7 +365,7 @@ export default function AdminTimetablePage() {
   }, [formData.class_id, classes]) 
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (
@@ -450,7 +489,7 @@ export default function AdminTimetablePage() {
         </div>
         {assessmentTableMissing && (
           <div className="px-4 py-3 text-sm bg-yellow-50 text-yellow-800 border-b border-yellow-200">
-            Assessments table not found. Please apply the database migration to create "assessment_timetables".
+            Assessments table not found. Please apply the database migration to create &quot;assessment_timetables&quot;.
           </div>
         )}
         <table className="min-w-full divide-y divide-gray-200">

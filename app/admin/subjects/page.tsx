@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
 import { Book, Plus, Edit, Trash2, X, Link2 } from 'lucide-react'
 import { Class, Teacher } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 type Subject = {
   id: string
@@ -249,7 +250,7 @@ export default function AdminSubjectsPage() {
   }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (
@@ -304,16 +305,23 @@ export default function AdminSubjectsPage() {
             {subjects.length === 0 ? (
               <tr>
                 <td colSpan={4} className="px-6 py-10 text-center text-gray-500">
-                  No subjects yet. Click "Add Subject" to create one.
+                  No subjects yet. Click &quot;Add Subject&quot; to create one.
                 </td>
               </tr>
             ) : (
               subjects.map((s) => {
-                const depts = Array.isArray(s.departments) && s.departments.length > 0
+                const raw = Array.isArray(s.departments) && s.departments.length > 0
                   ? s.departments
                   : s.department
                     ? String(s.department).split(';').map((d) => d.trim()).filter(Boolean)
                     : []
+                const depts = raw
+                  .map((d) => {
+                    const n = String(d || '').trim()
+                    if (/^arts$/i.test(n)) return 'Humanities'
+                    return n
+                  })
+                  .filter((n) => ['Science', 'Business', 'Humanities'].includes(n))
                 return (
                   <tr key={s.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -341,7 +349,7 @@ export default function AdminSubjectsPage() {
                             setSubjectForm({
                               name: s.name,
                               code: s.code || '',
-                              departments: depts,
+                            departments: depts,
                             })
                             setShowSubjectModal(true)
                           }}
@@ -579,13 +587,24 @@ export default function AdminSubjectsPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 >
                   <option value="">Select subject</option>
-                  {filteredSubjectsForAssign.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                      {s.code ? ` (${s.code})` : ''}
-                      {Array.isArray((s as any).departments) && (s as any).departments.length ? ` — ${(s as any).departments.join(', ')}` : ''}
-                    </option>
-                  ))}
+                  {filteredSubjectsForAssign.map((s) => {
+                    const arr = Array.isArray((s as any).departments) ? (s as any).departments : []
+                    const normed = arr
+                      .map((d: any) => {
+                        const n = String(d || '').trim()
+                        if (/^arts$/i.test(n)) return 'Humanities'
+                        return n
+                      })
+                      .filter((n: string) => ['Science', 'Business', 'Humanities'].includes(n))
+                    const label = normed.length ? ` — ${normed.join(', ')}` : ''
+                    return (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                        {s.code ? ` (${s.code})` : ''}
+                        {label}
+                      </option>
+                    )
+                  })}
                 </select>
               </div>
 

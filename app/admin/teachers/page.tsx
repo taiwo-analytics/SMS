@@ -6,6 +6,7 @@ import { GraduationCap, Plus, Edit, Trash2, X, BookOpen, User, Upload, CheckSqua
 import Image from 'next/image'
 import Papa from 'papaparse'
 import { Teacher, Class, Subject } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 type TeacherSubjectAssignment = {
   id: string
@@ -601,7 +602,7 @@ export default function AdminTeachersPage() {
   }, [classes, subjects])
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   const filteredTeachers = (() => {
@@ -1308,7 +1309,7 @@ export default function AdminTeachersPage() {
                           <div key={idx}>Row {f.row ?? '?'} — {f.email || 'N/A'} — {f.error}</div>
                         ))}
                         {(bulkResults as any[]).filter(r => r.status === 'error').length > 10 && (
-                          <div className="mt-1 italic">More errors hidden; use "Download failures" for full list.</div>
+                          <div className="mt-1 italic">More errors hidden; use &quot;Download failures&quot; for full list.</div>
                         )}
                       </div>
                     )}

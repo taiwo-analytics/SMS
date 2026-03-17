@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase/client'
+import { getGrade } from '@/lib/gradeScale'
 
 export default function BroadsheetPage() {
   const [sessions, setSessions] = useState<any[]>([])
@@ -63,14 +64,29 @@ export default function BroadsheetPage() {
     if (!broadsheet) return
     const rows: string[][] = []
     if (broadsheet.view === 'students') {
-      const headers = ['Student', ...broadsheet.subjects.map((s: any) => s.name), 'Total', 'Average', 'Position']
+      const headers: string[] = ['Student']
+      for (const s of broadsheet.subjects) {
+        headers.push(`${s.name} CA1`, `${s.name} CA2`, `${s.name} Exam`, `${s.name} Total`, `${s.name} Grade`)
+      }
+      headers.push('Grand Total', 'Average', 'Grade', 'Position')
       rows.push(headers)
       for (const row of broadsheet.rows) {
-        const cells = broadsheet.subjects.map((s: any) => {
+        const cells: string[] = []
+        for (const s of broadsheet.subjects) {
           const c = row.cells[s.id]
-          return c ? `${c.total} (${c.grade})` : '-'
+          if (c) {
+            const complete = c.ca1 > 0 && c.ca2 > 0 && c.exam > 0
+            cells.push(String(c.ca1), String(c.ca2), String(c.exam), String(c.total), complete ? c.grade : '—')
+          } else {
+            cells.push('-', '-', '-', '-', '-')
+          }
+        }
+        const allComplete = broadsheet.subjects.every((s: any) => {
+          const c = row.cells[s.id]
+          return c != null && c.ca1 > 0 && c.ca2 > 0 && c.exam > 0
         })
-        rows.push([row.student.name, ...cells, row.totalSum, row.average, row.position])
+        const overallGrade = allComplete && row.average > 0 ? getGrade(Math.round(row.average)).grade : '—'
+        rows.push([row.student.name, ...cells, String(row.totalSum), String(row.average), overallGrade, row.position ? String(row.position) : '—'])
       }
     } else {
       const headers = ['Subject', ...broadsheet.students.map((s: any) => s.name)]
@@ -78,7 +94,9 @@ export default function BroadsheetPage() {
       for (const row of broadsheet.rows) {
         const cells = broadsheet.students.map((s: any) => {
           const c = row.cells[s.id]
-          return c ? `${c.total} (${c.grade})` : '-'
+          if (!c) return '-'
+          const complete = c.ca1 > 0 && c.ca2 > 0 && c.exam > 0
+          return `${c.ca1}|${c.ca2}|${c.exam}=${c.total}${complete ? ` (${c.grade})` : ''}`
         })
         rows.push([row.subject.name, ...cells])
       }
@@ -158,13 +176,14 @@ export default function BroadsheetPage() {
                   <tr>
                     <th className="px-4 py-3 text-left font-semibold text-gray-700 sticky left-0 bg-gray-50 min-w-[160px]">Student</th>
                     {broadsheet.subjects.map((s: any) => (
-                      <th key={s.id} className="px-3 py-3 text-center font-semibold text-gray-700 min-w-[100px]">
+                      <th key={s.id} className="px-3 py-3 text-center font-semibold text-gray-700 min-w-[180px]">
                         <div>{s.name}</div>
-                        <div className="text-xs font-normal text-gray-400">/100</div>
+                        <div className="text-xs font-normal text-gray-400">CA1/20 · CA2/20 · Exam/60</div>
                       </th>
                     ))}
                     <th className="px-3 py-3 text-center font-semibold text-gray-700">Total</th>
                     <th className="px-3 py-3 text-center font-semibold text-gray-700">Avg</th>
+                    <th className="px-3 py-3 text-center font-semibold text-gray-700">Grade</th>
                     <th className="px-3 py-3 text-center font-semibold text-gray-700">Pos</th>
                   </tr>
                 </thead>
@@ -176,17 +195,51 @@ export default function BroadsheetPage() {
                         const c = row.cells[s.id]
                         return (
                           <td key={s.id} className="px-3 py-2 text-center">
-                            {c ? (
-                              <span className={`font-medium ${c.grade === 'F9' ? 'text-red-600' : c.grade.startsWith('A') ? 'text-green-600' : 'text-gray-800'}`}>
-                                {c.total} <span className="text-xs text-gray-500">({c.grade})</span>
-                              </span>
-                            ) : <span className="text-gray-300">—</span>}
+                            {c ? (() => {
+                              const complete = c.ca1 > 0 && c.ca2 > 0 && c.exam > 0
+                              return (
+                                <div className="flex items-center justify-center gap-1">
+                                  <span className="text-xs text-gray-500">{c.ca1}</span>
+                                  <span className="text-gray-300">|</span>
+                                  <span className="text-xs text-gray-500">{c.ca2}</span>
+                                  <span className="text-gray-300">|</span>
+                                  <span className="text-xs text-gray-500">{c.exam}</span>
+                                  <span className="text-gray-300">=</span>
+                                  <span className={`font-medium ${complete ? (c.grade === 'F' ? 'text-red-600' : c.grade === 'A' ? 'text-green-600' : 'text-gray-800') : 'text-gray-400'}`}>
+                                    {c.total}
+                                  </span>
+                                  {complete && <span className={`text-xs ${c.grade === 'F' ? 'text-red-500' : c.grade === 'A' ? 'text-green-500' : 'text-gray-400'}`}>({c.grade})</span>}
+                                </div>
+                              )
+                            })() : <span className="text-gray-300">—</span>}
                           </td>
                         )
                       })}
                       <td className="px-3 py-2 text-center font-semibold">{row.totalSum}</td>
                       <td className="px-3 py-2 text-center">{row.average}</td>
-                      <td className="px-3 py-2 text-center font-bold text-blue-600">{row.position}</td>
+                      {(() => {
+                        const allComplete = broadsheet.subjects.every((s: any) => {
+                          const c = row.cells[s.id]
+                          return c != null && c.ca1 > 0 && c.ca2 > 0 && c.exam > 0
+                        })
+                        const { grade } = allComplete && row.average > 0 ? getGrade(Math.round(row.average)) : { grade: '—' }
+                        return (
+                          <td className={`px-3 py-2 text-center font-bold ${grade === 'F' ? 'text-red-600' : grade === 'A' ? 'text-green-600' : grade === '—' ? 'text-gray-300' : 'text-gray-800'}`}>
+                            {grade}
+                          </td>
+                        )
+                      })()}
+                      {(() => {
+                        const pos = row.position
+                        if (!pos) return <td className="px-3 py-2 text-center text-gray-300">—</td>
+                        const posColor = pos === 1 ? 'text-yellow-500' : pos === 2 ? 'text-gray-400' : pos === 3 ? 'text-amber-600' : 'text-blue-600'
+                        const posBg = pos === 1 ? 'bg-yellow-50' : pos === 2 ? 'bg-gray-50' : pos === 3 ? 'bg-amber-50' : ''
+                        return (
+                          <td className={`px-3 py-2 text-center font-bold ${posColor} ${posBg}`}>
+                            {pos}<sup className="text-[10px]">{pos === 1 ? 'st' : pos === 2 ? 'nd' : pos === 3 ? 'rd' : 'th'}</sup>
+                          </td>
+                        )
+                      })()}
                     </tr>
                   ))}
                 </tbody>
@@ -209,11 +262,19 @@ export default function BroadsheetPage() {
                         const c = row.cells[s.id]
                         return (
                           <td key={s.id} className="px-3 py-2 text-center">
-                            {c ? (
-                              <span className={`font-medium ${c.grade === 'F9' ? 'text-red-600' : c.grade.startsWith('A') ? 'text-green-600' : 'text-gray-800'}`}>
-                                {c.total} <span className="text-xs text-gray-500">({c.grade})</span>
-                              </span>
-                            ) : <span className="text-gray-300">—</span>}
+                            {c ? (() => {
+                              const complete = c.ca1 > 0 && c.ca2 > 0 && c.exam > 0
+                              return (
+                                <div className="flex items-center justify-center gap-1">
+                                  <span className="text-xs text-gray-500">{c.ca1}|{c.ca2}|{c.exam}</span>
+                                  <span className="text-gray-300">=</span>
+                                  <span className={`font-medium ${complete ? (c.grade === 'F' ? 'text-red-600' : c.grade === 'A' ? 'text-green-600' : 'text-gray-800') : 'text-gray-400'}`}>
+                                    {c.total}
+                                  </span>
+                                  {complete && <span className={`text-xs ${c.grade === 'F' ? 'text-red-500' : c.grade === 'A' ? 'text-green-500' : 'text-gray-400'}`}>({c.grade})</span>}
+                                </div>
+                              )
+                            })() : <span className="text-gray-300">—</span>}
                           </td>
                         )
                       })}

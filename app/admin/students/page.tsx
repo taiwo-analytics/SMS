@@ -7,6 +7,7 @@ import { User, Plus, Edit, Trash2, X, Upload, Users, CheckSquare, BookOpen, Clip
 import { Student, Parent, Class } from '@/types/database'
 import Image from 'next/image'
 import Papa from 'papaparse'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function AdminStudentsPage() {
   const router = useRouter()
@@ -521,7 +522,7 @@ export default function AdminStudentsPage() {
   }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   // helper: derive primary class level/name for ordering and filtering
@@ -1145,7 +1146,7 @@ export default function AdminStudentsPage() {
                           <div key={idx}>Row {f.row ?? '?'} — {f.email || 'N/A'} — {f.error}</div>
                         ))}
                         {(bulkResults as any[]).filter(r => r.status === 'error').length > 10 && (
-                          <div className="mt-1 italic">More errors hidden; use "Download failures" for full list.</div>
+                          <div className="mt-1 italic">More errors hidden; use &quot;Download failures&quot; for full list.</div>
                         )}
                       </div>
                     )}

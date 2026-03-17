@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function BroadsheetByStudentPage() {
   const [sessions, setSessions] = useState<any[]>([])
@@ -60,16 +61,16 @@ export default function BroadsheetByStudentPage() {
 
   const getGradeColor = (grade: string) => {
     if (!grade) return 'text-gray-400'
-    if (grade === 'F9') return 'text-red-600'
-    if (grade.startsWith('A')) return 'text-green-600'
+    if (grade === 'F') return 'text-red-600'
+    if (grade === 'A') return 'text-green-600'
     if (grade.startsWith('B')) return 'text-blue-600'
     return 'text-gray-700'
   }
 
   const getRowBg = (grade: string) => {
     if (!grade) return ''
-    if (grade === 'F9') return 'bg-red-50'
-    if (grade.startsWith('A')) return 'bg-green-50'
+    if (grade === 'F') return 'bg-red-50'
+    if (grade === 'A') return 'bg-green-50'
     return ''
   }
 
@@ -77,7 +78,7 @@ export default function BroadsheetByStudentPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Broadsheet by Student</h1>
-        <p className="text-gray-500 text-sm">View each student's full subject results for a term</p>
+        <p className="text-gray-500 text-sm">View each student&apos;s full subject results for a term</p>
       </div>
 
       {/* Filters */}
@@ -105,7 +106,7 @@ export default function BroadsheetByStudentPage() {
         </div>
       </div>
 
-      {loading && <div className="text-center py-12 text-gray-500">Loading...</div>}
+      {loading && <SchoolLoader />}
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded p-4 mb-4">{error}</div>}
 
       {data && !loading && (
@@ -180,8 +181,9 @@ export default function BroadsheetByStudentPage() {
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-5 py-3 text-left font-semibold text-gray-600">Subject</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-600 w-24">CA Score</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-600 w-24">Exam Score</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-600 w-20">CA1</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-600 w-20">CA2</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-600 w-24">Exam</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-600 w-24">Total</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-600 w-20">Grade</th>
                         <th className="px-4 py-3 text-left font-semibold text-gray-600 w-28">Remark</th>
@@ -194,7 +196,10 @@ export default function BroadsheetByStudentPage() {
                           <tr key={subject.id} className={`hover:bg-gray-50 ${cell ? getRowBg(cell.grade) : ''}`}>
                             <td className="px-5 py-3 font-medium text-gray-800">{subject.name}</td>
                             <td className="px-4 py-3 text-center text-gray-600">
-                              {cell ? cell.ca : <span className="text-gray-300">—</span>}
+                              {cell ? cell.ca1 : <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-600">
+                              {cell ? cell.ca2 : <span className="text-gray-300">—</span>}
                             </td>
                             <td className="px-4 py-3 text-center text-gray-600">
                               {cell ? cell.exam : <span className="text-gray-300">—</span>}
@@ -202,11 +207,11 @@ export default function BroadsheetByStudentPage() {
                             <td className="px-4 py-3 text-center font-semibold text-gray-800">
                               {cell ? cell.total : <span className="text-gray-300">—</span>}
                             </td>
-                            <td className={`px-4 py-3 text-center font-bold ${cell ? getGradeColor(cell.grade) : ''}`}>
-                              {cell ? cell.grade : <span className="text-gray-300">—</span>}
+                            <td className={`px-4 py-3 text-center font-bold ${cell?.grade ? getGradeColor(cell.grade) : 'text-gray-300'}`}>
+                              {cell?.grade || <span className="text-gray-300">—</span>}
                             </td>
-                            <td className={`px-4 py-3 text-sm ${cell ? getGradeColor(cell.grade) : ''}`}>
-                              {cell ? cell.remark : <span className="text-gray-300">—</span>}
+                            <td className={`px-4 py-3 text-sm ${cell?.grade ? getGradeColor(cell.grade) : ''}`}>
+                              {cell?.remark || <span className="text-gray-300">—</span>}
                             </td>
                           </tr>
                         )
@@ -215,6 +220,7 @@ export default function BroadsheetByStudentPage() {
                     <tfoot className="bg-gray-50 border-t-2 border-gray-200">
                       <tr>
                         <td className="px-5 py-3 font-bold text-gray-700">Total / Average</td>
+                        <td className="px-4 py-3 text-center text-gray-500 text-xs">—</td>
                         <td className="px-4 py-3 text-center text-gray-500 text-xs">—</td>
                         <td className="px-4 py-3 text-center text-gray-500 text-xs">—</td>
                         <td className="px-4 py-3 text-center font-bold text-gray-900">{selectedStudentRow.totalSum}</td>

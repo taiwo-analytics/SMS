@@ -84,14 +84,36 @@ export default function AdminAttendancePage() {
     if (!classId) { setStudents([]); return }
     ;(async () => {
       try {
-        const params = new URLSearchParams({ class_id: classId })
-        if (attType === 'subject' && subjectId) params.set('subject_id', subjectId)
-        const res = await fetch(`/api/admin/subject-students?${params}`)
-        if (!res.ok) { setStudents([]); return }
-        const js = await res.json()
-        setStudents(js.students || [])
+        if (attType === 'subject') {
+          if (!subjectId) { setStudents([]); return }
+          const params = new URLSearchParams({ class_id: classId, subject_id: subjectId })
+          const res = await fetch(`/api/admin/subject-students?${params}`)
+          if (res.ok) {
+            const js = await res.json()
+            const list = (js.students || []) as any[]
+            setStudents(Array.isArray(list) ? list : [])
+          } else {
+            setStudents([])
+          }
+        } else {
+          const { data } = await supabase
+            .from('class_enrollments')
+            .select('students(id, full_name, photo_url)')
+            .eq('class_id', classId)
+          const fallback = (data || []).map((e: any) => e.students).filter(Boolean)
+          setStudents(fallback)
+        }
       } catch {
-        setStudents([])
+        if (attType === 'class') {
+          const { data } = await supabase
+            .from('class_enrollments')
+            .select('students(id, full_name, photo_url)')
+            .eq('class_id', classId)
+          const fallback = (data || []).map((e: any) => e.students).filter(Boolean)
+          setStudents(fallback)
+        } else {
+          setStudents([])
+        }
       }
     })()
   }, [classId, attType, subjectId])
@@ -198,6 +220,21 @@ export default function AdminAttendancePage() {
 
   const classLabel = (c: any) => c.class_level || c.name || 'Class'
 
+  // Students to render: prefer department-filtered 'students' from API.
+  // If subject view and it is empty, derive from attendance records (unique by student).
+  const renderStudents = (() => {
+    if (students && students.length > 0) return students
+    if (attType === 'subject' && Array.isArray(records) && records.length > 0) {
+      const map = new Map<string, any>()
+      for (const r of records) {
+        const st = r.students
+        if (st && st.id && !map.has(st.id)) map.set(st.id, { id: st.id, full_name: st.full_name, photo_url: st.photo_url || null })
+      }
+      return Array.from(map.values()).sort((a: any, b: any) => String(a.full_name || '').localeCompare(String(b.full_name || '')))
+    }
+    return students
+  })()
+
   const exportCSV = () => {
     if (records.length === 0) return
     const cls = classes.find((c) => c.id === classId)
@@ -206,7 +243,7 @@ export default function AdminAttendancePage() {
       ? ['Student', 'Status', 'Date']
       : ['Student', ...activeDates.map(fmtShort), 'Present', 'Absent', 'Late']
 
-    const rows = students.map((s) => {
+    const rows = renderStudents.map((s) => {
       if (view === 'daily') {
         const arr = index[s.id]?.[dateRange.from] || []
         const status =
@@ -247,7 +284,7 @@ export default function AdminAttendancePage() {
     URL.revokeObjectURL(url)
   }
 
-  const hasData = records.length > 0 || (classId && students.length > 0)
+  const hasData = records.length > 0 || (classId && renderStudents.length > 0)
 
   return (
     <div>
@@ -393,7 +430,7 @@ export default function AdminAttendancePage() {
           <Calendar className="w-14 h-14 text-gray-200 mx-auto mb-3" />
           <p className="text-gray-400 font-medium">Select a class to view attendance</p>
         </div>
-      ) : records.length === 0 ? (
+      ) : !hasData ? (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-16 text-center">
           <Users className="w-14 h-14 text-gray-200 mx-auto mb-3" />
           <p className="text-gray-500 font-medium">No attendance records found</p>
@@ -407,7 +444,7 @@ export default function AdminAttendancePage() {
             <span className="text-xs text-gray-400">{records.length} records</span>
           </div>
           <div className="divide-y divide-gray-50">
-            {students.map((student, idx) => {
+            {renderStudents.map((student, idx) => {
               const arr = index[student.id]?.[dateRange.from] || []
               const key =
                 (arr.includes('absent') && 'absent') ||
@@ -464,7 +501,7 @@ export default function AdminAttendancePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {students.map((student) => {
+                {renderStudents.map((student) => {
                   const sm = studentSummary(student.id)
                   const hasAny = Object.keys(index[student.id] || {}).length > 0
                   return (

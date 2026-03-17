@@ -47,7 +47,7 @@ DEV_ADMIN_SECRET=change_me_for_dev
 1. **Open SQL Editor**
    - In your Supabase dashboard, click on **SQL Editor** in the sidebar
 
-2. **Run the Schema Script**
+2. **Run the Base Schema Script**
    - Open the file `supabase/schema.sql` from this project
    - Copy the entire contents
    - Paste it into the SQL Editor
@@ -57,6 +57,15 @@ DEV_ADMIN_SECRET=change_me_for_dev
    - All necessary tables (profiles, teachers, students, parents, classes, etc.)
    - Row Level Security (RLS) policies
    - Triggers for automatic profile creation
+
+3. **Apply Project Migrations (Required)**
+   Some newer modules (inventory assignments, e-library, report card fields, subject attendance, etc.) are created in the SQL files under `supabase/migrations/`.
+
+   - In the Supabase dashboard SQL Editor, run each file in `supabase/migrations/` one-by-one.
+   - Run them in filename order (the `2026...` files are chronological).
+   - Also run `supabase/migrations/add_subject_attendance.sql`.
+
+   If you skip this step, certain pages and API routes will fail because tables/columns are missing.
 
 ## Step 4: Verify Connection
 

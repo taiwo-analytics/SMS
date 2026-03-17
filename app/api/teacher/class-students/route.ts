@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase/admin'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { cookies } from 'next/headers'
 
 export const runtime = 'nodejs'
 
@@ -11,7 +10,7 @@ export async function GET(req: Request) {
     const classId = searchParams.get('class_id')
 
     // Authenticate
-    const supabase = await createServerSupabaseClient(cookies())
+    const supabase = await createServerSupabaseClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 

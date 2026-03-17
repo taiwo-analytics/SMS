@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { getSupabaseAdmin } from '@/lib/supabase/admin'
 import { getGrade } from '@/lib/gradeScale'
 
 async function getCallerInfo(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>) {
@@ -17,6 +18,7 @@ async function getCallerInfo(supabase: Awaited<ReturnType<typeof createServerSup
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient()
+  const admin = getSupabaseAdmin()
   const caller = await getCallerInfo(supabase)
   if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -29,7 +31,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Fetch student
-  const { data: student, error: studentErr } = await supabase
+  const { data: student, error: studentErr } = await admin
     .from('students')
     .select('*')
     .eq('id', student_id)
@@ -37,28 +39,19 @@ export async function GET(req: NextRequest) {
   if (studentErr || !student) return NextResponse.json({ error: 'Student not found' }, { status: 404 })
 
   // Fetch enrollment to get class
-  const { data: enrollment } = await supabase
+  const { data: enrollment } = await admin
     .from('class_enrollments')
-    .select('class_id, classes(id, name, class_teacher_id)')
+    .select('class_id, department, classes(id, name, class_teacher_id, class_level)')
     .eq('student_id', student_id)
     .single()
 
   const classId = enrollment?.class_id
   const classData = enrollment?.classes as any
 
-  // Access check for teachers
+  // Access check for teachers: ONLY class teachers may view report cards
   if (caller.role === 'teacher' && caller.teacherId) {
     const isClassTeacher = classData?.class_teacher_id === caller.teacherId
-    let isSubjectTeacher = false
-    if (!isClassTeacher && classId) {
-      const { data: cst } = await supabase
-        .from('class_subject_teachers')
-        .select('id')
-        .eq('class_id', classId)
-        .eq('teacher_id', caller.teacherId)
-      isSubjectTeacher = (cst?.length ?? 0) > 0
-    }
-    if (!isClassTeacher && !isSubjectTeacher) {
+    if (!isClassTeacher) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
   } else if (caller.role !== 'admin') {
@@ -66,14 +59,14 @@ export async function GET(req: NextRequest) {
   }
 
   // Fetch term
-  const { data: term } = await supabase
+  const { data: term } = await admin
     .from('academic_terms')
     .select('*, academic_sessions(name)')
     .eq('id', term_id)
     .single()
 
   // Fetch scores
-  const { data: scores } = await supabase
+  const { data: scores } = await admin
     .from('subject_scores')
     .select(`
       *,
@@ -94,6 +87,8 @@ export async function GET(req: NextRequest) {
       subject_id: sc.subject_id,
       subject_name: sc.subjects?.name || '',
       subject_code: sc.subjects?.code || '',
+      ca1_score: Number(sc.ca1_score),
+      ca2_score: Number(sc.ca2_score),
       ca_score: Number(sc.ca_score),
       exam_score: Number(sc.exam_score),
       total,
@@ -106,6 +101,7 @@ export async function GET(req: NextRequest) {
 
   // Calculate position: get all students in same class+term, rank by average
   let position = 1
+  let summaryClassSize: number | undefined
   if (classId) {
     const { data: allScores } = await supabase
       .from('subject_scores')
@@ -126,10 +122,12 @@ export async function GET(req: NextRequest) {
     })).sort((a, b) => b.average - a.average)
     const rank = studentAverages.findIndex((s) => s.student_id === student_id)
     position = rank >= 0 ? rank + 1 : 1
+    const classSize = studentTotals.size
+    summaryClassSize = classSize
   }
 
   // Fetch attendance
-  const { data: attendance } = await supabase
+  const { data: attendance } = await admin
     .from('attendance')
     .select('statuses')
     .eq('student_id', student_id)
@@ -141,26 +139,38 @@ export async function GET(req: NextRequest) {
     total: (attendance || []).length,
   }
 
-  // Fetch remarks
+  // Fetch remarks (including new editable fields)
   const { data: remarks } = classId
-    ? await supabase
+    ? await admin
         .from('report_remarks')
-        .select('class_teacher_remark, principal_remark')
+        .select('*')
         .eq('student_id', student_id)
         .eq('class_id', classId)
         .eq('term_id', term_id)
-        .single()
+        .maybeSingle()
     : { data: null }
 
   // Fetch class teacher name
   let classTeacherName = ''
   if (classData?.class_teacher_id) {
-    const { data: ct } = await supabase
+    const { data: ct } = await admin
       .from('teachers')
       .select('full_name')
       .eq('id', classData.class_teacher_id)
       .single()
     classTeacherName = ct?.full_name || ''
+  }
+  const isSenior = String(classData?.class_level || '').toUpperCase().startsWith('SS')
+  const department = isSenior ? (enrollment?.department || student.department || '') : null
+
+  // Fetch school settings for report card
+  const { data: settingsRows } = await admin
+    .from('settings')
+    .select('key, value')
+    .in('key', ['schoolName', 'schoolAddress', 'schoolMotto', 'schoolPhone', 'schoolLogo', 'nextTermBegins', 'nextTermFees', 'fees_JSS1', 'fees_JSS2', 'fees_JSS3', 'fees_SS1', 'fees_SS2', 'fees_SS3'])
+  const settingsMap: Record<string, string> = {}
+  for (const row of (settingsRows || []) as any[]) {
+    settingsMap[row.key] = row.value
   }
 
   return NextResponse.json({
@@ -175,7 +185,7 @@ export async function GET(req: NextRequest) {
         guardian_phone: student.guardian_phone || null,
         admission: student.admission || null,
       },
-      class: { id: classId || null, name: classData?.name || '' },
+      class: { id: classId || null, name: classData?.name || '', class_level: classData?.class_level || '', department },
       term: { id: term_id, name: term?.name || '', session: (term?.academic_sessions as any)?.name || '' },
       subjects: subjectResults,
       summary: {
@@ -183,11 +193,29 @@ export async function GET(req: NextRequest) {
         average,
         position,
         subject_count: subjectCount,
+        class_size: typeof summaryClassSize === 'number' ? summaryClassSize : undefined,
       },
       attendance: attendanceSummary,
       class_teacher_name: classTeacherName,
       class_teacher_remark: (remarks as any)?.class_teacher_remark || '',
       principal_remark: (remarks as any)?.principal_remark || '',
+      skills: {
+        affective: (remarks as any)?.affective_skills || [],
+        psychomotor: (remarks as any)?.psychomotor_skills || [],
+      },
+      class_teacher_signature_url: (remarks as any)?.class_teacher_signature_url || '',
+      principal_signature_url: (remarks as any)?.principal_signature_url || '',
+      school: {
+        name: settingsMap.schoolName || '',
+        address: settingsMap.schoolAddress || '',
+        motto: settingsMap.schoolMotto || '',
+        phone: settingsMap.schoolPhone || '',
+        logo_url: settingsMap.schoolLogo || '',
+      },
+      next_term_begins: settingsMap.nextTermBegins || '',
+      school_fees: (classData?.class_level && settingsMap[`fees_${classData.class_level}`])
+        ? settingsMap[`fees_${classData.class_level}`]
+        : settingsMap.nextTermFees || '',
     },
   })
 }
@@ -202,13 +230,24 @@ export async function PUT(req: NextRequest) {
   }
 
   const body = await req.json()
-  const { student_id, class_id, term_id, class_teacher_remark, principal_remark } = body
+  const {
+    student_id,
+    class_id,
+    term_id,
+    class_teacher_remark,
+    principal_remark,
+    next_term_begins,
+    school_fees,
+    affective_skills,
+    psychomotor_skills,
+    teacher_signature_url,
+  } = body
 
   if (!student_id || !class_id || !term_id) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
 
-  const updateData: Record<string, string> = {}
+  const updateData: Record<string, any> = {}
   if (caller.role === 'admin' && principal_remark !== undefined) {
     updateData.principal_remark = principal_remark
   }
@@ -226,8 +265,23 @@ export async function PUT(req: NextRequest) {
     }
     updateData.class_teacher_remark = class_teacher_remark
   }
+  if (affective_skills !== undefined || psychomotor_skills !== undefined) {
+    if (caller.role === 'teacher' && caller.teacherId) {
+      const { data: classData } = await supabase
+        .from('classes')
+        .select('class_teacher_id')
+        .eq('id', class_id)
+        .single()
+      if (classData?.class_teacher_id !== caller.teacherId) {
+        return NextResponse.json({ error: 'Forbidden – not the class teacher' }, { status: 403 })
+      }
+    }
+    if (affective_skills !== undefined) updateData.affective_skills = affective_skills
+    if (psychomotor_skills !== undefined) updateData.psychomotor_skills = psychomotor_skills
+  }
 
-  const { data, error } = await supabase
+  const admin = getSupabaseAdmin()
+  const { data, error } = await admin
     .from('report_remarks')
     .upsert(
       { student_id, class_id, term_id, ...updateData },

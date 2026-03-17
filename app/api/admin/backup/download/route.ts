@@ -11,7 +11,7 @@ export async function GET() {
   try {
     const supabaseAdmin = getSupabaseAdmin()
 
-    const [settingsRes, subjectsRes, classesRes, timetablesRes, cstRes, sessionsRes, termsRes, eventsRes, messagesRes, inventoryRes, booksRes, paymentsRes] =
+    const [settingsRes, subjectsRes, classesRes, timetablesRes, cstRes, sessionsRes, termsRes, eventsRes, messagesRes, inventoryRes, inventoryAssignmentsRes, booksRes, paymentsRes] =
       await Promise.all([
         supabaseAdmin.from('settings').select('*'),
         supabaseAdmin.from('subjects').select('*'),
@@ -23,6 +23,7 @@ export async function GET() {
         supabaseAdmin.from('events').select('*'),
         supabaseAdmin.from('messages').select('*'),
         supabaseAdmin.from('inventory_items').select('*'),
+        supabaseAdmin.from('inventory_assignments').select('*'),
         supabaseAdmin.from('books').select('*'),
         supabaseAdmin.from('payments').select('*'),
       ])
@@ -44,6 +45,7 @@ export async function GET() {
         events: eventsRes.data || [],
         messages: messagesRes.data || [],
         inventory_items: inventoryRes.data || [],
+        inventory_assignments: inventoryAssignmentsRes.data || [],
         books: booksRes.data || [],
         payments: paymentsRes.data || [],
       },

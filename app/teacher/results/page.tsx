@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
 import { getGrade } from '@/lib/gradeScale'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function TeacherResultsPage() {
   const [loading, setLoading] = useState(true)
@@ -13,7 +14,7 @@ export default function TeacherResultsPage() {
   const [selectedAssignmentId, setSelectedAssignmentId] = useState('')
   const [termId, setTermId] = useState('')
   const [students, setStudents] = useState<any[]>([])
-  const [scores, setScores] = useState<Record<string, { ca: string; exam: string }>>({})
+  const [scores, setScores] = useState<Record<string, { ca1: string; ca2: string; exam: string }>>({})
   const [saving, setSaving] = useState<Record<string, boolean>>({})
   const [saved, setSaved] = useState<Record<string, boolean>>({})
   const [fetchingStudents, setFetchingStudents] = useState(false)
@@ -70,24 +71,23 @@ export default function TeacherResultsPage() {
       setFetchingStudents(true)
       setError('')
       try {
-        const { data: enroll } = await supabase
-          .from('class_enrollments')
-          .select('student_id, students(id, full_name)')
-          .eq('class_id', selectedAssignment.class_id)
-        const studentList = (enroll || []).map((e: any) => e.students).filter(Boolean)
-          .sort((a: any, b: any) => a.full_name.localeCompare(b.full_name))
+        const resp = await fetch(`/api/teacher/subject-students?class_id=${selectedAssignment.class_id}&subject_id=${selectedAssignment.subject_id}`)
+        const js1 = await resp.json()
+        const studentList = ((js1.students || []) as any[])
+          .slice()
+          .sort((a: any, b: any) => (a.full_name || '').localeCompare(b.full_name || ''))
         setStudents(studentList)
 
         const res = await fetch(
           `/api/results/subject-scores?class_id=${selectedAssignment.class_id}&subject_id=${selectedAssignment.subject_id}&term_id=${termId}`
         )
         const js = await res.json()
-        const scoreMap: Record<string, { ca: string; exam: string }> = {}
+        const scoreMap: Record<string, { ca1: string; ca2: string; exam: string }> = {}
         for (const sc of (js.scores || [])) {
-          scoreMap[sc.student_id] = { ca: String(sc.ca_score), exam: String(sc.exam_score) }
+          scoreMap[sc.student_id] = { ca1: String(sc.ca1_score), ca2: String(sc.ca2_score), exam: String(sc.exam_score) }
         }
         for (const s of studentList) {
-          if (!scoreMap[s.id]) scoreMap[s.id] = { ca: '', exam: '' }
+          if (!scoreMap[s.id]) scoreMap[s.id] = { ca1: '', ca2: '', exam: '' }
         }
         setScores(scoreMap)
         setSaved({})
@@ -97,7 +97,7 @@ export default function TeacherResultsPage() {
     })()
   }, [selectedAssignment?.id, termId])
 
-  const handleScoreChange = (studentId: string, field: 'ca' | 'exam', value: string) => {
+  const handleScoreChange = (studentId: string, field: 'ca1' | 'ca2' | 'exam', value: string) => {
     setScores((prev) => ({ ...prev, [studentId]: { ...prev[studentId], [field]: value } }))
     setSaved((prev) => ({ ...prev, [studentId]: false }))
   }
@@ -105,7 +105,8 @@ export default function TeacherResultsPage() {
   const saveScore = async (studentId: string) => {
     if (!selectedAssignment || !termId) return
     const s = scores[studentId]
-    const ca = parseFloat(s?.ca || '0') || 0
+    const ca1 = parseFloat(s?.ca1 || '0') || 0
+    const ca2 = parseFloat(s?.ca2 || '0') || 0
     const exam = parseFloat(s?.exam || '0') || 0
     setSaving((prev) => ({ ...prev, [studentId]: true }))
     try {
@@ -117,7 +118,8 @@ export default function TeacherResultsPage() {
           class_id: selectedAssignment.class_id,
           subject_id: selectedAssignment.subject_id,
           term_id: termId,
-          ca_score: ca,
+          ca1_score: ca1,
+          ca2_score: ca2,
           exam_score: exam,
         }),
       })
@@ -138,7 +140,7 @@ export default function TeacherResultsPage() {
     }
   }
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+  if (loading) return <SchoolLoader />
 
   return (
     <div>
@@ -214,8 +216,9 @@ export default function TeacherResultsPage() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-3 text-left font-semibold text-gray-700">Student</th>
-                  <th className="px-3 py-3 text-center font-semibold text-gray-700">CA Score (/40)</th>
-                  <th className="px-3 py-3 text-center font-semibold text-gray-700">Exam Score (/60)</th>
+                  <th className="px-3 py-3 text-center font-semibold text-gray-700">CA1 (/20)</th>
+                  <th className="px-3 py-3 text-center font-semibold text-gray-700">CA2 (/20)</th>
+                  <th className="px-3 py-3 text-center font-semibold text-gray-700">Exam (/60)</th>
                   <th className="px-3 py-3 text-center font-semibold text-gray-700">Total</th>
                   <th className="px-3 py-3 text-center font-semibold text-gray-700">Grade</th>
                   <th className="px-3 py-3 text-center font-semibold text-gray-700">Action</th>
@@ -223,11 +226,12 @@ export default function TeacherResultsPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {students.map((student: any) => {
-                  const s = scores[student.id] || { ca: '', exam: '' }
-                  const ca = parseFloat(s.ca) || 0
+                  const s = scores[student.id] || { ca1: '', ca2: '', exam: '' }
+                  const ca1 = parseFloat(s.ca1) || 0
+                  const ca2 = parseFloat(s.ca2) || 0
                   const exam = parseFloat(s.exam) || 0
-                  const total = ca + exam
-                  const hasScore = s.ca !== '' || s.exam !== ''
+                  const total = ca1 + ca2 + exam
+                  const hasScore = s.ca1 !== '' || s.ca2 !== '' || s.exam !== ''
                   const { grade } = hasScore ? getGrade(total) : { grade: '—' }
                   return (
                     <tr key={student.id} className="hover:bg-gray-50">
@@ -236,10 +240,22 @@ export default function TeacherResultsPage() {
                         <input
                           type="number"
                           min="0"
-                          max="40"
+                          max="20"
                           step="0.5"
-                          value={s.ca}
-                          onChange={(e) => handleScoreChange(student.id, 'ca', e.target.value)}
+                          value={s.ca1}
+                          onChange={(e) => handleScoreChange(student.id, 'ca1', e.target.value)}
+                          className="w-20 border rounded px-2 py-1 text-center text-sm"
+                          placeholder="0"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <input
+                          type="number"
+                          min="0"
+                          max="20"
+                          step="0.5"
+                          value={s.ca2}
+                          onChange={(e) => handleScoreChange(student.id, 'ca2', e.target.value)}
                           className="w-20 border rounded px-2 py-1 text-center text-sm"
                           placeholder="0"
                         />
@@ -260,7 +276,7 @@ export default function TeacherResultsPage() {
                         {hasScore ? total : '—'}
                       </td>
                       <td className={`px-3 py-2 text-center font-bold ${
-                        grade === 'F9' ? 'text-red-600' : grade.startsWith('A') ? 'text-green-600' : 'text-gray-800'
+                        grade === 'F' ? 'text-red-600' : grade === 'A' ? 'text-green-600' : 'text-gray-800'
                       }`}>
                         {grade}
                       </td>

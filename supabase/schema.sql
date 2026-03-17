@@ -945,6 +945,7 @@ CREATE TABLE IF NOT EXISTS timetables (
   class_id UUID REFERENCES classes(id) ON DELETE CASCADE NOT NULL,
   subject TEXT,
   teacher_id UUID REFERENCES teachers(id) ON DELETE SET NULL,
+  term_id UUID REFERENCES academic_terms(id) ON DELETE SET NULL,
   day_of_week TEXT NOT NULL CHECK (day_of_week IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday')),
   start_time TEXT NOT NULL,
   end_time TEXT NOT NULL,
@@ -966,6 +967,28 @@ CREATE POLICY "Admins can manage timetables"
       WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
     )
   );
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'timetables' AND column_name = 'term_id'
+  ) THEN
+    ALTER TABLE timetables ADD COLUMN term_id UUID REFERENCES academic_terms(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_timetables_term_id ON timetables(term_id);
+
+-- Backfill existing timetable entries to the active term
+DO $$
+DECLARE active_term UUID;
+BEGIN
+  SELECT id INTO active_term FROM academic_terms WHERE is_active = TRUE LIMIT 1;
+  IF active_term IS NOT NULL THEN
+    UPDATE timetables SET term_id = active_term WHERE term_id IS NULL;
+  END IF;
+END $$;
 
 -- ============================================================
 -- ASSESSMENTS TIMETABLE (CA1 / CA2 / Exams)

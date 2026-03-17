@@ -76,15 +76,18 @@ export async function POST(req: NextRequest) {
   if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { student_id, class_id, subject_id, term_id, ca_score, exam_score } = body
+  const { student_id, class_id, subject_id, term_id, ca1_score, ca2_score, exam_score } = body
 
   if (!student_id || !class_id || !subject_id || !term_id) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
 
   // Validate scores
-  if (ca_score !== undefined && (ca_score < 0 || ca_score > 40)) {
-    return NextResponse.json({ error: 'CA score must be between 0 and 40' }, { status: 400 })
+  if (ca1_score !== undefined && (ca1_score < 0 || ca1_score > 20)) {
+    return NextResponse.json({ error: 'CA1 score must be between 0 and 20' }, { status: 400 })
+  }
+  if (ca2_score !== undefined && (ca2_score < 0 || ca2_score > 20)) {
+    return NextResponse.json({ error: 'CA2 score must be between 0 and 20' }, { status: 400 })
   }
   if (exam_score !== undefined && (exam_score < 0 || exam_score > 60)) {
     return NextResponse.json({ error: 'Exam score must be between 0 and 60' }, { status: 400 })
@@ -114,7 +117,8 @@ export async function POST(req: NextRequest) {
         subject_id,
         term_id,
         teacher_id: teacherId,
-        ca_score: ca_score ?? 0,
+        ca1_score: ca1_score ?? 0,
+        ca2_score: ca2_score ?? 0,
         exam_score: exam_score ?? 0,
       },
       { onConflict: 'student_id,class_id,subject_id,term_id' }

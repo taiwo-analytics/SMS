@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { ClipboardList, BookOpen, Trash2 } from 'lucide-react'
 import { Class, Student, Grade, AcademicTerm } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function TeacherGradesPage() {
   const router = useRouter()
@@ -197,7 +198,7 @@ export default function TeacherGradesPage() {
   const filteredGrades = selectedTerm === 'all' ? grades : grades.filter(g => g.term_id === selectedTerm)
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

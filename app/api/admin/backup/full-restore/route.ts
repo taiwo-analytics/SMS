@@ -85,6 +85,12 @@ export async function POST(req: Request) {
       return row
     })
 
+    const inventoryAssignments = (tables.inventory_assignments || []).map((r: any) => {
+      const row = { ...r }
+      mapUserId(row, 'assigned_to')
+      return row
+    })
+
     // Upsert order (parents/students/teachers first so FKs exist)
     const results: Record<string, any> = {}
     const doUpsert = async (table: string, rows: any[], onConflict = 'id') => {
@@ -119,6 +125,7 @@ export async function POST(req: Request) {
     await doUpsert('events', tables.events || [])
     await doUpsert('messages', tables.messages || [])
     await doUpsert('inventory_items', tables.inventory_items || [])
+    await doUpsert('inventory_assignments', inventoryAssignments)
     await doUpsert('books', tables.books || [])
     await doUpsert('payments', tables.payments || [])
     await doUpsert('settings', tables.settings || [], 'key')

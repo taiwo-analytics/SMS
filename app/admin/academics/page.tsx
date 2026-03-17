@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
 import { CalendarRange, Plus, X, CheckCircle2, Edit } from 'lucide-react'
+import SchoolLoader from '@/components/SchoolLoader'
 
 type AcademicSession = {
   id: string
@@ -169,7 +170,7 @@ export default function AdminAcademicsPage() {
   }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Users, BookOpen, ClipboardList, UserCheck } from 'lucide-react'
+import SchoolLoader from '@/components/SchoolLoader'
 
 interface AssignedClass {
   id: string
@@ -97,7 +98,7 @@ export default function TeacherAssignedClassesPage() {
   }, [checkAuth])
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

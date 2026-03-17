@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Calendar, Plus, Edit, Trash2, X, Clock } from 'lucide-react'
 import { Event } from '@/types/events'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function AdminEventsPage() {
   const router = useRouter()
@@ -313,7 +314,7 @@ export default function AdminEventsPage() {
   }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

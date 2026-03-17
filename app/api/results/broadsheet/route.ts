@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
   const class_id = searchParams.get('class_id')
   const term_id = searchParams.get('term_id')
   const view = searchParams.get('view') || 'students' // students | subjects
+  const subject_id = searchParams.get('subject_id') // optional: filter to single subject
 
   if (!class_id || !term_id) {
     return NextResponse.json({ error: 'class_id and term_id are required' }, { status: 400 })
@@ -60,10 +61,32 @@ export async function GET(req: NextRequest) {
 
   if (!accessType) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
+  // Apply single-subject filter if provided
+  if (subject_id) {
+    if (accessType === 'subject' && !allowedSubjectIds.includes(subject_id)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    if (accessType === 'subject') {
+      allowedSubjectIds = [subject_id]
+    }
+  }
+
   // Determine which subjects this teacher can edit scores for
   let editableSubjectIds: string[] = []
-  if (caller.role === 'teacher' && caller.teacherId && accessType === 'subject') {
-    editableSubjectIds = allowedSubjectIds
+  if (caller.role === 'teacher' && caller.teacherId) {
+    if (accessType === 'subject') {
+      editableSubjectIds = allowedSubjectIds
+    } else if (accessType === 'full') {
+      // Class teacher who is also a subject teacher — find their assigned subjects
+      const { data: teacherSubjects } = await supabase
+        .from('class_subject_teachers')
+        .select('subject_id')
+        .eq('class_id', class_id)
+        .eq('teacher_id', caller.teacherId)
+      if (teacherSubjects && teacherSubjects.length > 0) {
+        editableSubjectIds = teacherSubjects.map((r: any) => r.subject_id)
+      }
+    }
   }
 
   // Fetch all scores for class+term
@@ -79,6 +102,9 @@ export async function GET(req: NextRequest) {
 
   if (accessType === 'subject' && allowedSubjectIds.length > 0) {
     scoresQuery = scoresQuery.in('subject_id', allowedSubjectIds)
+  }
+  if (subject_id && accessType === 'full') {
+    scoresQuery = scoresQuery.eq('subject_id', subject_id)
   }
 
   const { data: scores, error } = await scoresQuery
@@ -111,6 +137,9 @@ export async function GET(req: NextRequest) {
   if (accessType === 'subject' && allowedSubjectIds.length > 0) {
     subjectsQuery = subjectsQuery.in('subject_id', allowedSubjectIds)
   }
+  if (subject_id && accessType === 'full') {
+    subjectsQuery = subjectsQuery.eq('subject_id', subject_id)
+  }
   const { data: classSubjects } = await subjectsQuery
 
   // Build unique subjects list
@@ -131,16 +160,18 @@ export async function GET(req: NextRequest) {
   if (subjectIds.length > 0 && isSenior) {
     const { data: subjectRows } = await admin
       .from('subjects')
-      .select('id, departments, department')
+      .select('id, name, departments')
       .in('id', subjectIds)
     for (const s of (subjectRows || [])) {
-      let depts: string[] = []
-      if (Array.isArray((s as any).departments) && (s as any).departments.length > 0) {
-        depts = (s as any).departments
-      } else if ((s as any).department) {
-        depts = String((s as any).department).split(';').map((d: string) => d.trim()).filter(Boolean)
+      const depts = Array.isArray((s as any).departments) ? (s as any).departments as string[] : []
+      if (depts.length > 0) {
+        const normed = depts.map((d) => {
+          const n = norm(d)
+          if (n === 'arts') return 'humanities'
+          return n
+        }).filter((n) => ['science', 'business', 'humanities'].includes(n))
+        if (normed.length > 0) subjectDeptsMap.set(s.id, normed)
       }
-      if (depts.length > 0) subjectDeptsMap.set(s.id, depts)
     }
   }
 
@@ -152,17 +183,34 @@ export async function GET(req: NextRequest) {
   // Check if ANY subject in view has department restrictions
   const anySubjectHasDepts = subjectDeptsMap.size > 0
 
+  // When a single subject is selected, use direct department filtering (same as subject-attendance)
+  // This ensures class teachers see the same filtered list as subject teachers
+  let singleSubjectDepts: string[] | null = null
+  if (subject_id && isSenior && subjectDeptsMap.has(subject_id)) {
+    singleSubjectDepts = subjectDeptsMap.get(subject_id) || null
+  }
+
   for (const e of (enrollments || [])) {
     const s = (e as any).students
     if (!s) continue
-    const resolved = norm((e as any).department) || norm(s.department) || classDeptNorm
+    let resolved = norm((e as any).department) || norm(s.department) || classDeptNorm
+    if (resolved === 'arts') resolved = 'humanities'
     enrollmentDepts.set(s.id, resolved)
 
-    if (!isSenior || !anySubjectHasDepts) {
+    if (singleSubjectDepts && singleSubjectDepts.length > 0) {
+      // Single dept-restricted subject selected: filter directly by that subject's departments
+      if (!resolved) {
+        // Can't determine student dept — exclude for dept-restricted subjects
+        continue
+      }
+      if (singleSubjectDepts.some((d) => d === resolved)) {
+        studentsMap.set(s.id, s.full_name)
+      }
+    } else if (!isSenior || !anySubjectHasDepts) {
       // JSS or no dept-restricted subjects: show all students
       studentsMap.set(s.id, s.full_name)
     } else {
-      // SS with dept-restricted subjects: include student if they match at least one subject's department
+      // SS with dept-restricted subjects (multi-subject view): include student if they match at least one subject's department
       // or if there are core subjects (no dept restriction) in the view
       const hasCoreSubject = subjectIds.some((sid) => !subjectDeptsMap.has(sid))
       if (hasCoreSubject) {
@@ -170,7 +218,7 @@ export async function GET(req: NextRequest) {
       } else if (resolved) {
         // Only include if student's dept matches at least one subject
         const matches = Array.from(subjectDeptsMap.values()).some((depts) =>
-          depts.some((d) => norm(d) === resolved)
+          depts.some((d) => d === resolved)
         )
         if (matches) studentsMap.set(s.id, s.full_name)
       }
@@ -192,15 +240,26 @@ export async function GET(req: NextRequest) {
   if (view === 'students') {
     // Rows = students, cols = subjects
     const rows = students.map((student) => {
-      const cells: Record<string, { ca: number; exam: number; total: number; grade: string; remark: string } | null> = {}
+      const cells: Record<string, {
+        ca1: number
+        ca2: number
+        ca: number
+        exam: number
+        total: number
+        grade: string | null
+        remark: string | null
+        complete: boolean
+      } | null> = {}
       let totalSum = 0
       let subjectCount = 0
       for (const subject of subjects) {
         const sc = scoreIndex.get(`${student.id}:${subject.id}`)
         if (sc) {
+          const ca1 = Number(sc.ca1_score), ca2 = Number(sc.ca2_score), exam = Number(sc.exam_score)
           const total = Number(sc.total) || 0
-          const { grade, remark } = getGrade(total)
-          cells[subject.id] = { ca: Number(sc.ca_score), exam: Number(sc.exam_score), total, grade, remark }
+          const complete = ca1 > 0 && ca2 > 0 && exam > 0
+          const { grade, remark } = complete ? getGrade(total) : { grade: null, remark: null }
+          cells[subject.id] = { ca1, ca2, ca: Number(sc.ca_score), exam, total, grade, remark, complete }
           totalSum += total
           subjectCount++
         } else {
@@ -211,24 +270,37 @@ export async function GET(req: NextRequest) {
       return { student, cells, totalSum, average: Math.round(average * 100) / 100, subjectCount }
     })
 
-    // Add position (rank by average)
-    const sorted = [...rows].sort((a, b) => b.average - a.average)
+    // Add position (rank by average) — only for students who have scores
+    const rowsWithScores = rows.filter((r) => r.subjectCount > 0)
+    const sorted = [...rowsWithScores].sort((a, b) => b.average - a.average)
     const rowsWithPosition = rows.map((row) => ({
       ...row,
-      position: sorted.findIndex((r) => r.student.id === row.student.id) + 1,
+      position: row.subjectCount > 0
+        ? sorted.findIndex((r) => r.student.id === row.student.id) + 1
+        : null,
     }))
 
     return NextResponse.json({ view: 'students', subjects, rows: rowsWithPosition, accessType, editableSubjectIds })
   } else {
     // Rows = subjects, cols = students
     const rows = subjects.map((subject) => {
-      const cells: Record<string, { ca: number; exam: number; total: number; grade: string } | null> = {}
+      const cells: Record<string, {
+        ca1: number
+        ca2: number
+        ca: number
+        exam: number
+        total: number
+        grade: string | null
+        complete: boolean
+      } | null> = {}
       for (const student of students) {
         const sc = scoreIndex.get(`${student.id}:${subject.id}`)
         if (sc) {
+          const ca1 = Number(sc.ca1_score), ca2 = Number(sc.ca2_score), exam = Number(sc.exam_score)
           const total = Number(sc.total) || 0
-          const { grade } = getGrade(total)
-          cells[student.id] = { ca: Number(sc.ca_score), exam: Number(sc.exam_score), total, grade }
+          const complete = ca1 > 0 && ca2 > 0 && exam > 0
+          const { grade } = complete ? getGrade(total) : { grade: null }
+          cells[student.id] = { ca1, ca2, ca: Number(sc.ca_score), exam, total, grade, complete }
         } else {
           cells[student.id] = null
         }

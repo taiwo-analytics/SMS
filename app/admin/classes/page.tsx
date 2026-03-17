@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { BookOpen, Plus, Edit, Trash2, X, Users, User, Settings as SettingsIcon } from 'lucide-react'
 import { Class, Teacher, Student } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function AdminClassesPage() {
   const router = useRouter()
@@ -19,7 +20,7 @@ export default function AdminClassesPage() {
     department: ''
   })
   const [showAssignModal, setShowAssignModal] = useState(false)
-  const [assignTargetClass, setAssignTargetClass] = useState<Class | null>(null)
+  const [assignTargetClass, setAssignTargetClass] = useState<(Class & { teacher_name?: string }) | null>(null)
   const [assignTeacherId, setAssignTeacherId] = useState('')
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [studentsFilterClassId, setStudentsFilterClassId] = useState('')
@@ -267,7 +268,7 @@ export default function AdminClassesPage() {
   }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (
@@ -388,15 +389,16 @@ export default function AdminClassesPage() {
                   value={formData.category}
                   onChange={(e) => {
                     const cat = e.target.value as any
-                    setFormData({
+                    setFormData((prev) => ({
+                      ...prev,
                       category: cat,
                       class_level:
                         cat === 'Junior'
-                          ? (['JSS1','JSS2','JSS3'].includes(formData.class_level) ? formData.class_level : '')
+                          ? (['JSS1','JSS2','JSS3'].includes(prev.class_level) ? prev.class_level : '')
                           : cat === 'Senior'
-                          ? (['SS1','SS2','SS3'].includes(formData.class_level) ? formData.class_level : '')
+                          ? (['SS1','SS2','SS3'].includes(prev.class_level) ? prev.class_level : '')
                           : ''
-                    })
+                    }))
                   }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
                 >

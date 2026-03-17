@@ -147,6 +147,13 @@ export interface Message {
   created_at: string
 }
 
+export interface MessageRead {
+  id: string
+  message_id: string
+  user_id: string
+  read_at: string
+}
+
 export interface Book {
   id: string
   title: string
@@ -157,13 +164,42 @@ export interface Book {
   created_at: string
 }
 
+export interface ELibraryFile {
+  id: string
+  title: string
+  description?: string
+  file_name: string
+  file_url: string
+  file_size: number
+  file_type: string
+  category?: string
+  uploaded_by?: string
+  created_at: string
+}
+
 export interface InventoryItem {
   id: string
   name: string
-  category?: string
+  category?: string | null
   quantity: number
   min_stock: number
+  location?: string | null
+  condition?: string | null
+  notes?: string | null
   created_at: string
+}
+
+export interface InventoryAssignment {
+  id: string
+  item_id: string
+  assigned_to?: string | null
+  assigned_to_name: string
+  assigned_to_role?: string | null
+  quantity: number
+  assigned_at: string
+  returned_at?: string | null
+  notes?: string | null
+  inventory_items?: { id: string; name: string } | null
 }
 
 export interface Payment {
@@ -229,6 +265,8 @@ export interface SubjectScore {
   subject_id: string
   teacher_id?: string | null
   term_id: string
+  ca1_score: number
+  ca2_score: number
   ca_score: number
   exam_score: number
   total: number
@@ -264,6 +302,7 @@ export interface Timetable {
   class_id: string
   subject?: string | null
   teacher_id?: string | null
+  term_id?: string | null
   day_of_week: string
   start_time: string
   end_time: string

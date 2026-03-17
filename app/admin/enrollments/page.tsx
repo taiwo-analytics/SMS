@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Users, ArrowLeft, Plus, Trash2, X, Edit } from 'lucide-react'
 import { Class, Student } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 interface Enrollment {
   id: string
@@ -126,7 +127,7 @@ export default function AdminEnrollmentsPage() {
   }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

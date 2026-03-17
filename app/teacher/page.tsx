@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase/client'
 import { GraduationCap, BookOpen, Users, ClipboardList, UserCheck, FileText, Clock, Calendar, MapPin } from 'lucide-react'
 import Image from 'next/image'
 import { Event } from '@/types/events'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function TeacherDashboard() {
   const router = useRouter()
@@ -279,7 +280,7 @@ export default function TeacherDashboard() {
   }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

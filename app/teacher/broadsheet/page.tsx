@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { getGrade } from '@/lib/gradeScale'
 import { Save, Check } from 'lucide-react'
+import SchoolLoader from '@/components/SchoolLoader'
 
-export default function TeacherBroadsheetPage() {
+function TeacherBroadsheetContent() {
   const searchParams = useSearchParams()
   const initialClassId = searchParams.get('class_id') || ''
   const [loading, setLoading] = useState(true)
@@ -17,12 +18,14 @@ export default function TeacherBroadsheetPage() {
   const [classId, setClassId] = useState('')
   const [termId, setTermId] = useState('')
   const [view, setView] = useState<'students' | 'subjects'>('students')
+  const [subjectFilter, setSubjectFilter] = useState('')
+  const [classSubjectsMap, setClassSubjectsMap] = useState<Record<string, any[]>>({})
   const [broadsheet, setBroadsheet] = useState<any | null>(null)
   const [fetching, setFetching] = useState(false)
   const [error, setError] = useState('')
 
   // Inline editing state
-  const [editScores, setEditScores] = useState<Record<string, { ca: string; exam: string }>>({})
+  const [editScores, setEditScores] = useState<Record<string, { ca1: string; ca2: string; exam: string }>>({})
   const [savingCells, setSavingCells] = useState<Set<string>>(new Set())
   const [savedCells, setSavedCells] = useState<Set<string>>(new Set())
   const [saveError, setSaveError] = useState('')
@@ -39,13 +42,24 @@ export default function TeacherBroadsheetPage() {
 
         const { data: cst } = await supabase
           .from('class_subject_teachers')
-          .select('class_id, classes(id, name)')
+          .select('class_id, subject_id, classes(id, name), subjects(id, name)')
           .eq('teacher_id', teacher.id)
         const classMap = new Map()
+        const csMap: Record<string, any[]> = {}
         for (const r of (cst || [])) {
           const c = r.classes as any
-          if (c) classMap.set(c.id, c)
+          const s = r.subjects as any
+          if (c) {
+            classMap.set(c.id, c)
+            if (s) {
+              if (!csMap[c.id]) csMap[c.id] = []
+              if (!csMap[c.id].some((x: any) => x.id === s.id)) {
+                csMap[c.id].push(s)
+              }
+            }
+          }
         }
+        setClassSubjectsMap(csMap)
 
         const { data: classTeacherClasses } = await supabase
           .from('classes')
@@ -78,6 +92,16 @@ export default function TeacherBroadsheetPage() {
     }
   }, [allClasses, initialClassId])
 
+  // When class changes, default to the first assigned subject (no "All Subjects")
+  useEffect(() => {
+    const subs = classId ? (classSubjectsMap[classId] || []) : []
+    if (subs.length > 0) {
+      setSubjectFilter(subs[0].id)
+    } else {
+      setSubjectFilter('')
+    }
+  }, [classId, classSubjectsMap])
+
   useEffect(() => {
     if (!classId || !termId) { setBroadsheet(null); return }
     ;(async () => {
@@ -87,7 +111,9 @@ export default function TeacherBroadsheetPage() {
       setSavedCells(new Set())
       setSaveError('')
       try {
-        const res = await fetch(`/api/results/broadsheet?class_id=${classId}&term_id=${termId}&view=${view}`)
+        let url = `/api/results/broadsheet?class_id=${classId}&term_id=${termId}&view=${view}`
+        if (subjectFilter) url += `&subject_id=${subjectFilter}`
+        const res = await fetch(url)
         const js = await res.json()
         if (!res.ok) throw new Error(js.error || 'Failed to load')
         setBroadsheet(js)
@@ -95,13 +121,14 @@ export default function TeacherBroadsheetPage() {
 
         // Pre-populate edit scores from existing data
         if (js.view === 'students' && js.editableSubjectIds?.length > 0) {
-          const init: Record<string, { ca: string; exam: string }> = {}
+          const init: Record<string, { ca1: string; ca2: string; exam: string }> = {}
           for (const row of (js.rows || [])) {
             for (const subId of js.editableSubjectIds) {
               const key = `${row.student.id}:${subId}`
               const cell = row.cells[subId]
               init[key] = {
-                ca: cell ? String(cell.ca) : '',
+                ca1: cell ? String(cell.ca1) : '',
+                ca2: cell ? String(cell.ca2) : '',
                 exam: cell ? String(cell.exam) : '',
               }
             }
@@ -114,14 +141,14 @@ export default function TeacherBroadsheetPage() {
         setFetching(false)
       }
     })()
-  }, [classId, termId, view])
+  }, [classId, termId, view, subjectFilter])
 
   const isFullAccess = classTeacherIds.includes(classId)
   const canEdit = editableSubjectIds.length > 0
   const selectedClass = allClasses.find((c) => c.id === classId)
   const selectedTerm = terms.find((t) => t.id === termId)
 
-  const handleScoreChange = (studentId: string, subjectId: string, field: 'ca' | 'exam', value: string) => {
+  const handleScoreChange = (studentId: string, subjectId: string, field: 'ca1' | 'ca2' | 'exam', value: string) => {
     const key = `${studentId}:${subjectId}`
     setEditScores((prev) => ({
       ...prev,
@@ -140,11 +167,13 @@ export default function TeacherBroadsheetPage() {
     const score = editScores[key]
     if (!score) return
 
-    const ca = score.ca === '' ? 0 : Number(score.ca)
+    const ca1 = score.ca1 === '' ? 0 : Number(score.ca1)
+    const ca2 = score.ca2 === '' ? 0 : Number(score.ca2)
     const exam = score.exam === '' ? 0 : Number(score.exam)
 
-    if (isNaN(ca) || ca < 0 || ca > 40) { setSaveError(`CA must be 0-40`); return }
-    if (isNaN(exam) || exam < 0 || exam > 60) { setSaveError(`Exam must be 0-60`); return }
+    if (isNaN(ca1) || ca1 < 0 || ca1 > 20) { setSaveError('CA1 must be 0-20'); return }
+    if (isNaN(ca2) || ca2 < 0 || ca2 > 20) { setSaveError('CA2 must be 0-20'); return }
+    if (isNaN(exam) || exam < 0 || exam > 60) { setSaveError('Exam must be 0-60'); return }
 
     setSavingCells((prev) => new Set(prev).add(key))
     setSaveError('')
@@ -158,7 +187,8 @@ export default function TeacherBroadsheetPage() {
           class_id: classId,
           subject_id: subjectId,
           term_id: termId,
-          ca_score: ca,
+          ca1_score: ca1,
+          ca2_score: ca2,
           exam_score: exam,
         }),
       })
@@ -169,14 +199,16 @@ export default function TeacherBroadsheetPage() {
 
       // Update broadsheet data locally
       if (broadsheet?.view === 'students') {
+        const ca = ca1 + ca2
         const total = ca + exam
-        const { grade, remark } = getGrade(total)
+        const complete = ca1 > 0 && ca2 > 0 && exam > 0
+        const { grade, remark } = complete ? getGrade(total) : { grade: null, remark: null }
         setBroadsheet((prev: any) => {
           if (!prev) return prev
           const newRows = prev.rows.map((row: any) => {
             if (row.student.id !== studentId) return row
             const newCells = { ...row.cells }
-            newCells[subjectId] = { ca, exam, total, grade, remark }
+            newCells[subjectId] = { ca1, ca2, ca, exam, total, grade, remark, complete }
             // Recalculate totals
             let totalSum = 0
             let subjectCount = 0
@@ -187,11 +219,14 @@ export default function TeacherBroadsheetPage() {
             const average = subjectCount > 0 ? Math.round((totalSum / subjectCount) * 100) / 100 : 0
             return { ...row, cells: newCells, totalSum, average, subjectCount }
           })
-          // Recalculate positions
-          const sorted = [...newRows].sort((a: any, b: any) => b.average - a.average)
+          // Recalculate positions — only for students with scores
+          const withScores = newRows.filter((r: any) => r.subjectCount > 0)
+          const sorted = [...withScores].sort((a: any, b: any) => b.average - a.average)
           const withPos = newRows.map((row: any) => ({
             ...row,
-            position: sorted.findIndex((r: any) => r.student.id === row.student.id) + 1,
+            position: row.subjectCount > 0
+              ? sorted.findIndex((r: any) => r.student.id === row.student.id) + 1
+              : null,
           }))
           return { ...prev, rows: withPos }
         })
@@ -223,14 +258,28 @@ export default function TeacherBroadsheetPage() {
     if (!broadsheet) return
     const rows: string[][] = []
     if (broadsheet.view === 'students') {
-      const headers = ['Student', ...broadsheet.subjects.map((s: any) => s.name), 'Total', 'Average', 'Position']
+      const headers: string[] = ['Student']
+      for (const s of broadsheet.subjects) {
+        headers.push(`${s.name} CA1`, `${s.name} CA2`, `${s.name} Exam`, `${s.name} Total`, `${s.name} Grade`)
+      }
+      headers.push('Grand Total', 'Average', 'Grade', 'Position')
       rows.push(headers)
       for (const row of broadsheet.rows) {
-        const cells = broadsheet.subjects.map((s: any) => {
+        const cells: string[] = []
+        for (const s of broadsheet.subjects) {
           const c = row.cells[s.id]
-          return c ? `${c.total} (${c.grade})` : '-'
+          if (c) {
+            cells.push(String(c.ca1), String(c.ca2), String(c.exam), String(c.total), c.grade || '—')
+          } else {
+            cells.push('-', '-', '-', '-', '-')
+          }
+        }
+        const allComplete = broadsheet.subjects.every((s: any) => {
+          const c = row.cells[s.id]
+          return c != null && c.complete
         })
-        rows.push([row.student.name, ...cells, row.totalSum, row.average, row.position])
+        const overallGrade = allComplete && row.average > 0 ? getGrade(Math.round(row.average)).grade : '—'
+        rows.push([row.student.name, ...cells, String(row.totalSum), String(row.average), overallGrade, row.position ? String(row.position) : '—'])
       }
     } else {
       const headers = ['Subject', ...broadsheet.students.map((s: any) => s.name)]
@@ -238,7 +287,7 @@ export default function TeacherBroadsheetPage() {
       for (const row of broadsheet.rows) {
         const cells = broadsheet.students.map((s: any) => {
           const c = row.cells[s.id]
-          return c ? `${c.total} (${c.grade})` : '-'
+          return c ? `${c.total}${c.grade ? ` (${c.grade})` : ''}` : '-'
         })
         rows.push([row.subject.name, ...cells])
       }
@@ -248,12 +297,13 @@ export default function TeacherBroadsheetPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'broadsheet.csv'
+    const subName = subjectFilter && broadsheet.subjects?.[0]?.name ? `_${broadsheet.subjects[0].name}` : ''
+    a.download = `broadsheet${subName}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+  if (loading) return <SchoolLoader />
 
   return (
     <div>
@@ -262,7 +312,7 @@ export default function TeacherBroadsheetPage() {
         <p className="text-gray-500 text-sm">
           {classId
             ? canEdit
-              ? 'You can edit CA/Exam scores for your assigned subjects'
+              ? 'You can edit CA1/CA2/Exam scores for your assigned subjects'
               : isFullAccess
                 ? 'You are the class teacher — showing full class broadsheet (view only)'
                 : 'Showing results for your assigned subject(s) only'
@@ -301,6 +351,20 @@ export default function TeacherBroadsheetPage() {
             ))}
           </select>
         </div>
+        {classId && (classSubjectsMap[classId]?.length ?? 0) > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Subject</label>
+            <select
+              value={subjectFilter}
+              onChange={(e) => setSubjectFilter(e.target.value)}
+              className="border rounded px-3 py-2 text-sm min-w-[160px]"
+            >
+              {(classSubjectsMap[classId] || []).map((s: any) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">View</label>
           <select
@@ -355,16 +419,17 @@ export default function TeacherBroadsheetPage() {
                     {broadsheet.subjects?.map((s: any) => {
                       const isEditable = editableSubjectIds.includes(s.id)
                       return (
-                        <th key={s.id} className={`px-3 py-3 text-center font-semibold text-gray-700 ${isEditable ? 'min-w-[160px]' : 'min-w-[100px]'}`}>
+                        <th key={s.id} className={`px-3 py-3 text-center font-semibold text-gray-700 ${isEditable ? 'min-w-[220px]' : 'min-w-[100px]'}`}>
                           <div>{s.name}</div>
                           <div className="text-xs font-normal text-gray-400">
-                            {isEditable ? 'CA/40 · Exam/60' : '/100'}
+                            {isEditable ? 'CA1/20 · CA2/20 · Exam/60' : '/100'}
                           </div>
                         </th>
                       )
                     })}
                     <th className="px-3 py-3 text-center font-semibold text-gray-700">Total</th>
                     <th className="px-3 py-3 text-center font-semibold text-gray-700">Avg</th>
+                    <th className="px-3 py-3 text-center font-semibold text-gray-700">Grade</th>
                     <th className="px-3 py-3 text-center font-semibold text-gray-700">Pos</th>
                   </tr>
                 </thead>
@@ -380,23 +445,35 @@ export default function TeacherBroadsheetPage() {
                         const isSaved = savedCells.has(key)
 
                         if (isEditable) {
-                          const scores = editScores[key] || { ca: '', exam: '' }
-                          const caNum = scores.ca === '' ? 0 : Number(scores.ca)
+                          const scores = editScores[key] || { ca1: '', ca2: '', exam: '' }
+                          const ca1Num = scores.ca1 === '' ? 0 : Number(scores.ca1)
+                          const ca2Num = scores.ca2 === '' ? 0 : Number(scores.ca2)
                           const examNum = scores.exam === '' ? 0 : Number(scores.exam)
-                          const total = caNum + examNum
-                          const { grade } = getGrade(total)
+                          const total = ca1Num + ca2Num + examNum
+                          const allFilled = scores.ca1 !== '' && scores.ca2 !== '' && scores.exam !== ''
+                          const { grade } = allFilled ? getGrade(total) : { grade: '' }
                           return (
                             <td key={s.id} className="px-2 py-1 text-center">
                               <div className="flex items-center gap-1 justify-center">
                                 <input
                                   type="number"
                                   min="0"
-                                  max="40"
-                                  value={scores.ca}
-                                  onChange={(e) => handleScoreChange(row.student.id, s.id, 'ca', e.target.value)}
+                                  max="20"
+                                  value={scores.ca1}
+                                  onChange={(e) => handleScoreChange(row.student.id, s.id, 'ca1', e.target.value)}
                                   onBlur={() => saveCell(row.student.id, s.id)}
-                                  className="w-14 px-1.5 py-1 border rounded text-center text-xs focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none"
-                                  placeholder="CA"
+                                  className="w-12 px-1 py-1 border rounded text-center text-xs focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none"
+                                  placeholder="CA1"
+                                />
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="20"
+                                  value={scores.ca2}
+                                  onChange={(e) => handleScoreChange(row.student.id, s.id, 'ca2', e.target.value)}
+                                  onBlur={() => saveCell(row.student.id, s.id)}
+                                  className="w-12 px-1 py-1 border rounded text-center text-xs focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none"
+                                  placeholder="CA2"
                                 />
                                 <input
                                   type="number"
@@ -405,11 +482,11 @@ export default function TeacherBroadsheetPage() {
                                   value={scores.exam}
                                   onChange={(e) => handleScoreChange(row.student.id, s.id, 'exam', e.target.value)}
                                   onBlur={() => saveCell(row.student.id, s.id)}
-                                  className="w-14 px-1.5 py-1 border rounded text-center text-xs focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none"
+                                  className="w-12 px-1 py-1 border rounded text-center text-xs focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none"
                                   placeholder="Exam"
                                 />
-                                <span className={`text-xs font-medium w-8 ${grade === 'F9' ? 'text-red-600' : grade.startsWith('A') ? 'text-green-600' : 'text-gray-600'}`}>
-                                  {total > 0 ? total : ''}
+                                <span className={`text-xs font-medium w-8 ${grade === 'F' ? 'text-red-600' : grade === 'A' ? 'text-green-600' : 'text-gray-600'}`}>
+                                  {allFilled ? total : ''}
                                 </span>
                                 {isSaving && <span className="animate-spin text-blue-500 text-xs">&#9696;</span>}
                                 {isSaved && <Check className="w-3 h-3 text-green-500" />}
@@ -421,8 +498,8 @@ export default function TeacherBroadsheetPage() {
                         return (
                           <td key={s.id} className="px-3 py-2 text-center">
                             {c ? (
-                              <span className={`font-medium ${c.grade === 'F9' ? 'text-red-600' : c.grade.startsWith('A') ? 'text-green-600' : 'text-gray-800'}`}>
-                                {c.total} <span className="text-xs text-gray-500">({c.grade})</span>
+                              <span className={`font-medium ${c.grade === 'F' ? 'text-red-600' : c.grade === 'A' ? 'text-green-600' : 'text-gray-800'}`}>
+                                {c.total} {c.grade ? <span className="text-xs text-gray-500">({c.grade})</span> : null}
                               </span>
                             ) : <span className="text-gray-300">—</span>}
                           </td>
@@ -430,7 +507,30 @@ export default function TeacherBroadsheetPage() {
                       })}
                       <td className="px-3 py-2 text-center font-semibold">{row.totalSum}</td>
                       <td className="px-3 py-2 text-center">{row.average}</td>
-                      <td className="px-3 py-2 text-center font-bold text-blue-600">{row.position}</td>
+                      {(() => {
+                        // Only show grade when all subjects have complete scores (ca1, ca2, exam all > 0)
+                        const allComplete = broadsheet.subjects.every((s: any) => {
+                          const c = row.cells[s.id]
+                          return c != null && c.complete
+                        })
+                        const { grade, remark } = allComplete && row.average > 0 ? getGrade(Math.round(row.average)) : { grade: '—', remark: '' }
+                        return (
+                          <td className={`px-3 py-2 text-center font-bold ${grade === 'F' ? 'text-red-600' : grade === 'A' ? 'text-green-600' : grade === '—' ? 'text-gray-300' : 'text-gray-800'}`} title={remark}>
+                            {grade}
+                          </td>
+                        )
+                      })()}
+                      {(() => {
+                        const pos = row.position
+                        if (!pos) return <td className="px-3 py-2 text-center text-gray-300">—</td>
+                        const posColor = pos === 1 ? 'text-yellow-500' : pos === 2 ? 'text-gray-400' : pos === 3 ? 'text-amber-600' : 'text-blue-600'
+                        const posBg = pos === 1 ? 'bg-yellow-50' : pos === 2 ? 'bg-gray-50' : pos === 3 ? 'bg-amber-50' : ''
+                        return (
+                          <td className={`px-3 py-2 text-center font-bold ${posColor} ${posBg}`}>
+                            {pos}<sup className="text-[10px]">{pos === 1 ? 'st' : pos === 2 ? 'nd' : pos === 3 ? 'rd' : 'th'}</sup>
+                          </td>
+                        )
+                      })()}
                     </tr>
                   ))}
                 </tbody>
@@ -454,8 +554,8 @@ export default function TeacherBroadsheetPage() {
                         return (
                           <td key={s.id} className="px-3 py-2 text-center">
                             {c ? (
-                              <span className={`font-medium ${c.grade === 'F9' ? 'text-red-600' : c.grade.startsWith('A') ? 'text-green-600' : 'text-gray-800'}`}>
-                                {c.total} <span className="text-xs text-gray-500">({c.grade})</span>
+                              <span className={`font-medium ${c.grade === 'F' ? 'text-red-600' : c.grade === 'A' ? 'text-green-600' : 'text-gray-800'}`}>
+                                {c.total} {c.grade ? <span className="text-xs text-gray-500">({c.grade})</span> : null}
                               </span>
                             ) : <span className="text-gray-300">—</span>}
                           </td>
@@ -477,5 +577,13 @@ export default function TeacherBroadsheetPage() {
         <div className="text-center py-12 text-gray-400">Select a term and class to view the broadsheet.</div>
       )}
     </div>
+  )
+}
+
+export default function TeacherBroadsheetPage() {
+  return (
+    <Suspense fallback={<SchoolLoader />}>
+      <TeacherBroadsheetContent />
+    </Suspense>
   )
 }

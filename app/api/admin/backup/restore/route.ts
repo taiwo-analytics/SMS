@@ -22,6 +22,7 @@ export async function POST(req: Request) {
     const settings = Array.isArray(tables.settings) ? tables.settings : []
     const events = Array.isArray(tables.events) ? tables.events : []
     const inventory = Array.isArray(tables.inventory_items) ? tables.inventory_items : []
+    const inventoryAssignments = Array.isArray(tables.inventory_assignments) ? tables.inventory_assignments : []
     const books = Array.isArray(tables.books) ? tables.books : []
     const payments = Array.isArray(tables.payments) ? tables.payments : []
 
@@ -42,6 +43,7 @@ export async function POST(req: Request) {
     if (cst.length) await doUpsert('class_subject_teachers', cst)
     if (events.length) await doUpsert('events', events)
     if (inventory.length) await doUpsert('inventory_items', inventory)
+    if (inventoryAssignments.length) await doUpsert('inventory_assignments', inventoryAssignments)
     if (books.length) await doUpsert('books', books)
     if (payments.length) await doUpsert('payments', payments)
 

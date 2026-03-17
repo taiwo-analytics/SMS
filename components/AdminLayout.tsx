@@ -24,11 +24,13 @@ import {
   Clock,
   ChevronDown,
   ChevronRight,
+  ClipboardList,
 } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 
 interface AdminLayoutProps {
-  children: React.ReactNode
+  children: ReactNode
 }
 
 export default function AdminLayout({ children }: AdminLayoutProps) {
@@ -53,6 +55,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       { name: 'Broadsheet (Student)', href: '/admin/results/broadsheet-student' },
       { name: 'Report Card', href: '/admin/results/report-card' },
     ]},
+    { name: 'Assignments', href: '/admin/assignments', icon: ClipboardList },
     { name: 'Attendance', href: '/admin/attendance', icon: UserCheck },
     { name: 'Messages', href: '/admin/messages', icon: MessageSquare },
     { name: 'Library', href: '/admin/library', icon: Library },
@@ -66,31 +69,23 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const [showNotifications, setShowNotifications] = useState(false)
   const [upcomingEvents, setUpcomingEvents] = useState<any[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
+  const [profile, setProfile] = useState<{ full_name: string; role: string } | null>(null)
+  const [schoolName, setSchoolName] = useState('')
+  const [schoolLogo, setSchoolLogo] = useState('')
 
   useEffect(() => {
+    loadProfile()
     loadUpcomingEvents()
     loadUnreadCount()
-    const interval = setInterval(loadUpcomingEvents, 60000) // Refresh every minute
+    const interval = setInterval(loadUpcomingEvents, 60000)
     const msgInterval = setInterval(loadUnreadCount, 60000)
     const eventsChannel = supabase
       .channel('events-admin')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'events' },
-        () => {
-          loadUpcomingEvents()
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, () => loadUpcomingEvents())
       .subscribe()
     const messagesChannel = supabase
       .channel('messages-admin')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages' },
-        () => {
-          loadUnreadCount()
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => loadUnreadCount())
       .subscribe()
     return () => {
       clearInterval(interval)
@@ -99,6 +94,27 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       supabase.removeChannel(messagesChannel)
     }
   }, [])
+
+  const loadProfile = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data } = await supabase.from('profiles').select('full_name, role').eq('id', user.id).single()
+        if (data) setProfile(data)
+      }
+      const { data: settingsRows } = await supabase.from('settings').select('key, value').in('key', ['schoolName', 'schoolLogo'])
+      for (const row of (settingsRows || []) as any[]) {
+        if (row.key === 'schoolName' && row.value) setSchoolName(row.value)
+        if (row.key === 'schoolLogo' && row.value) {
+          setSchoolLogo(row.value)
+          try { localStorage.setItem('schoolLogo', row.value) } catch {}
+        }
+      }
+      if (!(settingsRows || []).find((r: any) => r.key === 'schoolLogo' && r.value)) {
+        try { localStorage.removeItem('schoolLogo') } catch {}
+      }
+    } catch (e) { console.error('Error loading profile:', e) }
+  }
 
   const pad2 = (n: number) => String(n).padStart(2, '0')
   const parseTime24 = (s?: string): string | null => {
@@ -111,7 +127,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     if (ap === 'AM' && h === 12) h = 0
     return `${pad2(h)}:${pad2(mm)}`
   }
-  const splitRange24 = (s?: string): { start: string | null, end: string | null } => {
+  const splitRange24 = (s?: string) => {
     if (!s) return { start: null, end: null }
     if (!s.includes('-')) return { start: parseTime24(s), end: null }
     const [a, b] = s.split('-')
@@ -120,65 +136,40 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const resolveStartEnd = (ev: any) => {
     let start = ev.start_at ? new Date(ev.start_at) : new Date(ev.event_date)
     const { start: s24, end: e24 } = splitRange24(ev.event_time)
-    if (s24) {
-      const [h, m] = s24.split(':').map(Number)
-      start.setHours(h, m, 0, 0)
-    }
+    if (s24) { const [h, m] = s24.split(':').map(Number); start.setHours(h, m, 0, 0) }
     let end: Date
-    if (ev.end_at) {
-      end = new Date(ev.end_at)
-    } else if (e24) {
-      end = new Date(start)
-      const [h2, m2] = e24.split(':').map(Number)
-      end.setHours(h2, m2, 0, 0)
-    } else {
-      end = new Date(start.getTime() + 60 * 60 * 1000)
-    }
+    if (ev.end_at) { end = new Date(ev.end_at) }
+    else if (e24) { end = new Date(start); const [h2, m2] = e24.split(':').map(Number); end.setHours(h2, m2, 0, 0) }
+    else { end = new Date(start.getTime() + 60 * 60 * 1000) }
     return { start, end }
   }
 
   const loadUpcomingEvents = async () => {
     try {
-      const { data } = await supabase
-        .from('events')
-        .select('*')
-        .order('event_date', { ascending: true })
-        .limit(200)
-
+      const { data } = await supabase.from('events').select('*').order('event_date', { ascending: true }).limit(200)
       if (data) {
         const now = new Date()
         const cutoff = new Date(now.getTime() - 10 * 60 * 1000)
         const enriched = (data as any[]).map((e) => ({ raw: e, ...resolveStartEnd(e) }))
-        const upcoming = enriched
-          .filter((e) => e.end >= cutoff)
-          .sort((a, b) => a.start.getTime() - b.start.getTime())
-          .slice(0, 10)
-          .map((e) => e.raw)
+        const upcoming = enriched.filter((e) => e.end >= cutoff).sort((a, b) => a.start.getTime() - b.start.getTime()).slice(0, 10).map((e) => e.raw)
         setUpcomingEvents(upcoming)
         setEventCount(upcoming.length)
       }
-    } catch (error) {
-      console.error('Error loading events:', error)
-    }
+    } catch (error) { console.error('Error loading events:', error) }
   }
 
   const loadUnreadCount = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const uid = user?.id || null
-      const { data, error } = await supabase
-        .from('messages')
-        .select('id, is_read, read_at, recipient_role, sender_id')
-        .in('recipient_role', ['admin', 'all'])
+      if (!uid) return
+      const { data, error } = await supabase.from('messages').select('id, sender_id').in('recipient_role', ['admin', 'all'])
       if (error) throw error
-      // Only count messages received by admin (not sent by this admin user)
-      const count = (data || []).filter((m: any) =>
-        m.sender_id !== uid && (m.is_read === false || m.read_at == null)
-      ).length
+      const { data: reads } = await supabase.from('message_reads').select('message_id').eq('user_id', uid)
+      const readIds = new Set((reads || []).map((r: any) => r.message_id))
+      const count = (data || []).filter((m: any) => m.sender_id !== uid && !readIds.has(m.id)).length
       setUnreadCount(count)
-    } catch (e) {
-      console.error('Error loading unread messages:', e)
-    }
+    } catch (e) { console.error('Error loading unread messages:', e) }
   }
 
   const handleLogout = async () => {
@@ -186,75 +177,96 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     router.push('/auth/login')
   }
 
+  const getInitials = (name?: string) => {
+    if (!name) return 'A'
+    return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Top Navigation */}
-      <nav className="bg-white shadow-sm border-b fixed w-full top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30">
+      {/* Top Navigation - Glass effect */}
+      <nav className="fixed w-full top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-gray-200/60 shadow-sm">
+        <div className="px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="lg:hidden text-gray-600 hover:text-gray-900"
+                className="lg:hidden p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-all"
               >
-                {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+                {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
-              <button
-                onClick={() => router.push('/')}
-                className="text-gray-600 hover:text-gray-900"
-              >
-                <Shield className="w-6 h-6" />
+              <button onClick={() => router.push('/')} className="flex-shrink-0">
+                {schoolLogo ? (
+                  <img src={schoolLogo} alt="" className="w-9 h-9 rounded-xl object-contain shadow-sm ring-1 ring-gray-200" />
+                ) : (
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-200">
+                    <Shield className="w-5 h-5 text-white" />
+                  </div>
+                )}
               </button>
-              <h1 className="text-xl font-bold text-gray-900">Admin Panel</h1>
+              <div className="hidden sm:block">
+                <h1 className="text-lg font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent truncate">
+                  {schoolName || 'Admin Panel'}
+                </h1>
+              </div>
             </div>
-            <div className="flex items-center gap-4">
+
+            <div className="flex items-center gap-2">
+              {/* Messages */}
+              <button
+                onClick={() => router.push('/admin/messages')}
+                className="relative p-2.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                title="Messages"
+              >
+                <MessageSquare className="w-5 h-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 bg-gradient-to-r from-red-500 to-pink-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center shadow-lg shadow-red-200">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
               {/* Notification Bell */}
               <div className="relative">
                 <button
                   onClick={() => setShowNotifications(!showNotifications)}
-                  className="relative p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100"
+                  className="relative p-2.5 text-gray-500 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-all"
                 >
-                  <Bell className="w-6 h-6" />
+                  <Bell className="w-5 h-5" />
                   {eventCount > 0 && (
-                    <span className="absolute top-0 right-0 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                      {eventCount}
+                    <span className="absolute -top-0.5 -right-0.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center shadow-lg shadow-amber-200">
+                      {eventCount > 9 ? '9+' : eventCount}
                     </span>
                   )}
                 </button>
-                
-                {/* Notifications Dropdown */}
+
                 {showNotifications && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50 max-h-96 overflow-y-auto">
-                    <div className="p-4 border-b border-gray-200">
-                      <h3 className="font-semibold text-gray-900">Upcoming Events</h3>
+                  <div className="absolute right-0 mt-2 w-80 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-200/60 z-50 max-h-96 overflow-y-auto">
+                    <div className="p-4 border-b border-gray-100">
+                      <h3 className="font-bold text-gray-900">Upcoming Events</h3>
                     </div>
                     <div className="p-2">
                       {upcomingEvents.length === 0 ? (
                         <p className="text-sm text-gray-500 p-4 text-center">No upcoming events</p>
                       ) : (
                         upcomingEvents.map((event) => {
-                          const { start, end } = resolveStartEnd(event as any)
+                          const { start, end } = resolveStartEnd(event)
                           const now = new Date()
-                          const diffTime = start.getTime() - now.getTime()
-                          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
                           const isOngoing = now >= start && now <= end
-                          
+                          const diffDays = Math.ceil((start.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
                           return (
-                            <div key={event.id} className="p-3 hover:bg-gray-50 rounded-lg mb-1">
-                              <p className="font-medium text-sm text-gray-900">{event.title}</p>
-                              {event.description && (
-                                <p className="text-xs text-gray-600">{event.description}</p>
-                              )}
-                              <p className="text-xs text-gray-500">
-                                {start.toLocaleDateString()} at {start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            <div key={event.id} className="p-3 hover:bg-indigo-50/50 rounded-xl mb-1 transition-colors">
+                              <p className="font-semibold text-sm text-gray-900">{event.title}</p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {start.toLocaleDateString()} • {start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </p>
                               <p className="text-xs mt-1">
                                 {isOngoing ? (
-                                  <span className="text-green-600 font-medium">Ongoing</span>
+                                  <span className="text-emerald-600 font-semibold">🟢 Ongoing</span>
                                 ) : diffDays > 0 ? (
-                                  <span className="text-blue-600">{diffDays} day{diffDays !== 1 ? 's' : ''} left</span>
+                                  <span className="text-blue-600">{diffDays}d left</span>
                                 ) : (
-                                  <span className="text-gray-500">Today</span>
+                                  <span className="text-amber-600 font-semibold">Today</span>
                                 )}
                               </p>
                             </div>
@@ -265,100 +277,129 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                   </div>
                 )}
               </div>
-              
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-2 text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg hover:bg-gray-100"
-              >
-                <LogOut className="w-5 h-5" />
-                <span className="hidden sm:inline">Logout</span>
-              </button>
+
+              {/* Profile avatar */}
+              <div className="hidden sm:flex items-center gap-2 ml-1 pl-3 border-l border-gray-200">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold shadow-lg shadow-indigo-200">
+                  {getInitials(profile?.full_name)}
+                </div>
+                <div className="hidden md:block">
+                  <p className="text-xs font-semibold text-gray-900 truncate max-w-[100px]">{profile?.full_name || 'Admin'}</p>
+                  <p className="text-[10px] text-gray-500 capitalize">{profile?.role || 'Administrator'}</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </nav>
 
       <div className="flex pt-16">
-        {/* Sidebar */}
+        {/* Sidebar - Dark gradient */}
         <aside
           className={`${
             sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-          } fixed inset-y-0 left-0 z-40 w-64 bg-white shadow-lg transform transition-transform duration-200 ease-in-out lg:translate-x-0 pt-16`}
+          } fixed inset-y-0 left-0 z-40 w-[260px] bg-gradient-to-b from-slate-900 via-slate-800 to-indigo-950 transform transition-transform duration-300 ease-in-out lg:translate-x-0 pt-16 shadow-2xl`}
         >
-          <div className="h-full overflow-y-auto py-4">
-            <nav className="space-y-1 px-3">
-              {navigation.map((item) => {
-                const Icon = item.icon
-                const isActive = pathname === item.href
-                if ((item as any).children) {
-                  const isOpen = openGroups.includes(item.name)
-                  const isGroupActive = (item as any).children.some((c: any) => pathname === c.href)
-                  return (
-                    <div key={item.name}>
-                      <button
-                        onClick={() => setOpenGroups((prev) =>
-                          prev.includes(item.name) ? prev.filter((g) => g !== item.name) : [...prev, item.name]
+          <div className="flex flex-col h-full">
+            <div className="flex-1 overflow-y-auto py-4 px-3 scrollbar-thin">
+              <nav className="space-y-1">
+                {navigation.map((item) => {
+                  const Icon = item.icon
+                  const isActive = pathname === item.href
+                  if ((item as any).children) {
+                    const isOpen = openGroups.includes(item.name)
+                    const isGroupActive = (item as any).children.some((c: any) => pathname === c.href)
+                    return (
+                      <div key={item.name}>
+                        <button
+                          onClick={() => setOpenGroups((prev) =>
+                            prev.includes(item.name) ? prev.filter((g) => g !== item.name) : [...prev, item.name]
+                          )}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
+                            isGroupActive
+                              ? 'bg-white/10 text-white shadow-lg shadow-indigo-900/20'
+                              : 'text-slate-400 hover:text-white hover:bg-white/5'
+                          }`}
+                        >
+                          <div className={`p-1.5 rounded-lg ${isGroupActive ? 'bg-indigo-500/20' : ''}`}>
+                            <Icon className="w-4 h-4" />
+                          </div>
+                          <span className="flex-1 text-left text-sm font-medium">{item.name}</span>
+                          {isOpen ? <ChevronDown className="w-4 h-4 opacity-60" /> : <ChevronRight className="w-4 h-4 opacity-60" />}
+                        </button>
+                        {isOpen && (
+                          <div className="ml-10 mt-1 space-y-0.5 border-l border-white/10 pl-3">
+                            {(item as any).children.map((child: any) => (
+                              <button
+                                key={child.name}
+                                onClick={() => { router.push(child.href); setSidebarOpen(false) }}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                                  pathname === child.href
+                                    ? 'text-indigo-300 bg-indigo-500/10'
+                                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
+                                }`}
+                              >
+                                {child.name}
+                              </button>
+                            ))}
+                          </div>
                         )}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                          isGroupActive
-                            ? 'bg-blue-50 text-blue-600 font-medium'
-                            : 'text-gray-700 hover:bg-gray-50'
-                        }`}
-                      >
-                        <Icon className="w-5 h-5" />
-                        <span className="flex-1 text-left">{item.name}</span>
-                        {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                      </button>
-                      {isOpen && (
-                        <div className="ml-8 mt-1 space-y-1">
-                          {(item as any).children.map((child: any) => (
-                            <button
-                              key={child.name}
-                              onClick={() => { router.push(child.href); setSidebarOpen(false) }}
-                              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
-                                pathname === child.href
-                                  ? 'bg-blue-50 text-blue-600 font-medium'
-                                  : 'text-gray-600 hover:bg-gray-50'
-                              }`}
-                            >
-                              <span className="w-1.5 h-1.5 rounded-full bg-current opacity-50" />
-                              {child.name}
-                            </button>
-                          ))}
-                        </div>
+                      </div>
+                    )
+                  }
+                  return (
+                    <button
+                      key={item.name}
+                      onClick={() => { router.push(item.href); setSidebarOpen(false) }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group ${
+                        isActive
+                          ? 'bg-gradient-to-r from-indigo-600/30 to-purple-600/20 text-white shadow-lg shadow-indigo-900/20 border border-indigo-500/20'
+                          : 'text-slate-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <div className={`p-1.5 rounded-lg transition-all ${isActive ? 'bg-indigo-500 shadow-lg shadow-indigo-500/30' : 'group-hover:bg-white/10'}`}>
+                        <Icon className={`w-4 h-4 ${isActive ? 'text-white' : ''}`} />
+                      </div>
+                      <span className="flex-1 text-left text-sm font-medium">{item.name}</span>
+                      {item.name === 'Messages' && unreadCount > 0 && (
+                        <span className="bg-gradient-to-r from-red-500 to-pink-500 text-white text-[10px] font-bold rounded-full px-2 py-0.5 shadow-lg shadow-red-500/30">
+                          {unreadCount}
+                        </span>
                       )}
-                    </div>
+                    </button>
                   )
-                }
-                return (
-                  <button
-                    key={item.name}
-                    onClick={() => {
-                      router.push(item.href)
-                      setSidebarOpen(false)
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      isActive
-                        ? 'bg-blue-50 text-blue-600 font-medium'
-                        : 'text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    <Icon className="w-5 h-5" />
-                    <span className="flex-1 text-left">{item.name}</span>
-                    {item.name === 'Messages' && unreadCount > 0 && (
-                      <span className="ml-auto bg-red-500 text-white text-xs rounded-full px-2 py-0.5">
-                        {unreadCount}
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </nav>
+                })}
+              </nav>
+            </div>
+
+            {/* User Profile & Logout */}
+            <div className="p-3 border-t border-white/10">
+              <div className="flex items-center gap-3 mb-3 px-2">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-indigo-500/30">
+                  {getInitials(profile?.full_name)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-white truncate">
+                    {profile?.full_name || 'Admin User'}
+                  </p>
+                  <p className="text-xs text-slate-400 capitalize">
+                    {profile?.role || 'Administrator'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-xl transition-all group"
+              >
+                <LogOut className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                <span>Sign Out</span>
+              </button>
+            </div>
           </div>
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 lg:ml-64 p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 lg:ml-[260px] p-4 sm:p-6 lg:p-8">
           {children}
         </main>
       </div>
@@ -366,20 +407,12 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       {/* Overlay for mobile */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-30 lg:hidden"
-          onClick={() => {
-            setSidebarOpen(false)
-            setShowNotifications(false)
-          }}
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 lg:hidden"
+          onClick={() => { setSidebarOpen(false); setShowNotifications(false) }}
         />
       )}
-      
-      {/* Overlay for notifications */}
       {showNotifications && (
-        <div
-          className="fixed inset-0 z-40 lg:hidden"
-          onClick={() => setShowNotifications(false)}
-        />
+        <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setShowNotifications(false)} />
       )}
     </div>
   )

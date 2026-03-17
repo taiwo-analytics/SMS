@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { UserCheck, BookOpen, Check, ChevronLeft, ChevronRight, Save } from 'lucide-react'
 import type { AttendanceStatus } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 const STATUS_CONFIG: Record<AttendanceStatus, { label: string; color: string; ring: string; dot: string }> = {
   present:  { label: 'Present',  color: 'bg-emerald-500 text-white border-emerald-500',  ring: 'ring-emerald-300',  dot: 'bg-emerald-500' },
@@ -22,7 +23,7 @@ function shiftDate(d: string, days: number) {
   return dt.toISOString().slice(0, 10)
 }
 
-export default function SubjectAttendancePage() {
+function SubjectAttendanceContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const initialClassId = searchParams.get('class_id') || ''
@@ -426,5 +427,13 @@ export default function SubjectAttendancePage() {
         </>
       )}
     </div>
+  )
+}
+
+export default function SubjectAttendancePage() {
+  return (
+    <Suspense fallback={<SchoolLoader />}>
+      <SubjectAttendanceContent />
+    </Suspense>
   )
 }

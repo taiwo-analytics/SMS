@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Users, ArrowLeft } from 'lucide-react'
 import { Student } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function ParentChildrenPage() {
   const router = useRouter()
@@ -66,7 +67,7 @@ export default function ParentChildrenPage() {
   }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (

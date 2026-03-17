@@ -1,16 +1,19 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
+import SchoolLoader from '@/components/SchoolLoader'
 
-export default function AdminReportCardIndexPage() {
+function AdminReportCardIndexContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [students, setStudents] = useState<any[]>([])
   const [classes, setClasses] = useState<any[]>([])
-  const [classId, setClassId] = useState('')
+  const [classId, setClassId] = useState(searchParams.get('class_id') || '')
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
+  const [loadingClass, setLoadingClass] = useState(false)
 
   useEffect(() => {
     ;(async () => {
@@ -24,30 +27,55 @@ export default function AdminReportCardIndexPage() {
     })()
   }, [])
 
-  const [enrollments, setEnrollments] = useState<Record<string, string>>({})
-
   useEffect(() => {
-    if (!classId) { setEnrollments({}); return }
-    supabase
-      .from('class_enrollments')
-      .select('student_id')
-      .eq('class_id', classId)
-      .then(({ data }) => {
-        const map: Record<string, string> = {}
-        for (const e of (data || [])) map[e.student_id] = e.student_id
-        setEnrollments(map)
-      })
+    ;(async () => {
+      if (!classId) return
+      setLoadingClass(true)
+      try {
+        const res = await fetch(`/api/admin/classes/students?class_id=${classId}`)
+        const js = await res.json()
+        if (res.ok && Array.isArray(js.students)) {
+          setStudents(js.students)
+        }
+      } finally {
+        setLoadingClass(false)
+      }
+    })()
   }, [classId])
 
+  const normalize = (str: string) => (str || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+  const isNear = (a: string, b: string) => {
+    if (a === b) return true
+    if (Math.abs(a.length - b.length) > 1) return false
+    let i = 0, j = 0, errors = 0
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { i++; j++; } else {
+        errors++; if (errors > 1) return false
+        if (a.length > b.length) i++
+        else if (b.length > a.length) j++
+        else { i++; j++; }
+      }
+    }
+    return errors <= 1
+  }
+  const nameMatches = (name: string, query: string) => {
+    const h = normalize(name)
+    const n = normalize(query)
+    if (!n) return true
+    if (h.includes(n)) return true
+    const ht = h.split(' ')
+    const nt = n.split(' ')
+    return nt.every((t) => ht.some((x) => x.startsWith(t) || t.startsWith(x) || isNear(x, t)))
+  }
   const filtered = students.filter((s) => {
-    const matchesSearch = !search ||
-      s.full_name.toLowerCase().includes(search.toLowerCase()) ||
-      (s.admission_number || '').toLowerCase().includes(search.toLowerCase())
-    const matchesClass = !classId || enrollments[s.id]
-    return matchesSearch && matchesClass
+    const matchesSearch =
+      !search ||
+      nameMatches(s.full_name || '', search) ||
+      normalize((s.admission_number || s.admission || '') as string).includes(normalize(search))
+    return matchesSearch
   })
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+  if (loading) return <SchoolLoader />
 
   return (
     <div>
@@ -86,7 +114,9 @@ export default function AdminReportCardIndexPage() {
       {/* Student List */}
       <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
         {filtered.length === 0 ? (
-          <div className="text-center py-16 text-gray-400">No students found.</div>
+          <div className="text-center py-16 text-gray-400">
+            {loadingClass ? 'Loading class students…' : 'No students found.'}
+          </div>
         ) : (
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
@@ -103,7 +133,13 @@ export default function AdminReportCardIndexPage() {
                   <td className="px-4 py-3 text-gray-500">{s.admission_number || '—'}</td>
                   <td className="px-4 py-3 text-right">
                     <button
-                      onClick={() => router.push(`/admin/results/report-card/${s.id}`)}
+                      onClick={() => {
+                        const ret = `/admin/results/report-card${classId ? `?class_id=${classId}` : ''}`
+                        const qp = new URLSearchParams()
+                        if (classId) qp.set('class_id', classId)
+                        qp.set('return_to', ret)
+                        router.push(`/admin/results/report-card/${s.id}?${qp.toString()}`)
+                      }}
                       className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700"
                     >
                       View Report Card
@@ -116,5 +152,13 @@ export default function AdminReportCardIndexPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function AdminReportCardIndexPage() {
+  return (
+    <Suspense fallback={<SchoolLoader />}>
+      <AdminReportCardIndexContent />
+    </Suspense>
   )
 }

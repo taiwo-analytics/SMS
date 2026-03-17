@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { BookOpen, Users, ClipboardList, UserCheck, Eye, CheckCircle } from 'lucide-react'
+import SchoolLoader from '@/components/SchoolLoader'
 
 export default function TeacherClassesPage() {
   const router = useRouter()
@@ -75,7 +76,7 @@ export default function TeacherClassesPage() {
   }, [checkAuthAndLoadClasses])
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   const departmentColors: Record<string, string> = {

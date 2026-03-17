@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { MessageSquare, Send, Trash2, Reply, Mail, MailOpen, User } from 'lucide-react'
+import SchoolLoader from '@/components/SchoolLoader'
+import { MessageSquare, Send, Trash2, Reply, Mail, MailOpen, User, CheckCircle, Users } from 'lucide-react'
 
 interface MessageItem {
   id: string
@@ -18,11 +19,12 @@ interface MessageItem {
   created_at: string
   date: string
   replies?: MessageItem[]
+  senderName?: string
 }
 
 interface TeacherOption {
-  id: string        // teachers.id
-  user_id: string   // auth user id
+  id: string
+  user_id: string
   full_name: string
 }
 
@@ -33,7 +35,6 @@ export default function AdminMessagesPage() {
   const [teachers, setTeachers] = useState<TeacherOption[]>([])
   const [newMessage, setNewMessage] = useState({
     recipientType: 'broadcast' as 'broadcast' | 'individual',
-    broadcastRole: '' as string,
     teacherUserId: '' as string,
     subject: '',
     content: '',
@@ -42,19 +43,77 @@ export default function AdminMessagesPage() {
   const [selectedMessage, setSelectedMessage] = useState<MessageItem | null>(null)
   const [adminUserId, setAdminUserId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'inbox' | 'sent'>('inbox')
+  const [readMessageIds, setReadMessageIds] = useState<Set<string>>(new Set())
+  const [senderNames, setSenderNames] = useState<Record<string, string>>({})
+  const [sendStatus, setSendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+
+  const loadReadStatus = useCallback(async (uid: string) => {
+    try {
+      const { data } = await supabase
+        .from('message_reads')
+        .select('message_id')
+        .eq('user_id', uid)
+      setReadMessageIds(new Set((data || []).map((r: any) => r.message_id)))
+    } catch (e) {
+      console.error('Error loading read status:', e)
+    }
+  }, [])
 
   const loadMessages = useCallback(async (currentUserId?: string) => {
     try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .order('created_at', { ascending: false })
-      if (error) throw error
-      const uid = currentUserId
-      const allMessages = (data || []).map((m: any) => ({
+      const uid = currentUserId || adminUserId
+      if (!uid) return
+
+      // Fetch messages relevant to admin using explicit OR filters
+      const [toAdminRes, directRes, sentRes] = await Promise.all([
+        // Messages addressed to admin role
+        supabase
+          .from('messages')
+          .select('*')
+          .in('recipient_role', ['admin', 'all'])
+          .is('recipient_id', null)
+          .order('created_at', { ascending: false }),
+        // Direct messages to this admin
+        supabase
+          .from('messages')
+          .select('*')
+          .eq('recipient_id', uid)
+          .order('created_at', { ascending: false }),
+        // Messages sent by this admin
+        supabase
+          .from('messages')
+          .select('*')
+          .eq('sender_id', uid)
+          .order('created_at', { ascending: false }),
+      ])
+
+      // Deduplicate
+      const seen = new Set<string>()
+      const rawMessages: any[] = []
+      for (const res of [toAdminRes, directRes, sentRes]) {
+        if (res.error) { console.error('Message query error:', res.error); continue }
+        for (const m of (res.data || [])) {
+          if (!seen.has(m.id)) { seen.add(m.id); rawMessages.push(m) }
+        }
+      }
+
+      // Sort newest first
+      rawMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+      const senderIds = [...new Set(rawMessages.map((m: any) => m.sender_id).filter(Boolean))]
+      if (senderIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, full_name')
+          .in('id', senderIds)
+        const nameMap: Record<string, string> = {}
+        ;(profiles || []).forEach((p: any) => { nameMap[p.id] = p.full_name })
+        setSenderNames(nameMap)
+      }
+
+      const allMessages = rawMessages.map((m: any) => ({
         ...m,
         date: new Date(m.created_at).toLocaleString(),
-        isMine: m.sender_id === uid,
       }))
       const parentMessages = allMessages.filter((m: any) => !m.reply_to)
       const replyMessages = allMessages.filter((m: any) => m.reply_to)
@@ -65,10 +124,12 @@ export default function AdminMessagesPage() {
           .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
       }))
       setMessages(threaded)
+
+      await loadReadStatus(uid)
     } catch (error) {
       console.error('Error loading messages:', error)
     }
-  }, [])
+  }, [adminUserId, loadReadStatus])
 
   const loadTeachers = useCallback(async () => {
     try {
@@ -89,6 +150,7 @@ export default function AdminMessagesPage() {
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser()
       if (authError || !user) { setLoading(false); return }
+      setAdminUserId(user.id)
       await Promise.all([loadMessages(user.id), loadTeachers()])
     } catch (error) {
       console.error('Error:', error)
@@ -98,9 +160,6 @@ export default function AdminMessagesPage() {
   }, [loadMessages, loadTeachers])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) setAdminUserId(user.id)
-    })
     checkAuth()
   }, [checkAuth])
 
@@ -115,6 +174,7 @@ export default function AdminMessagesPage() {
 
   const handleSendMessage = async () => {
     if (!newMessage.subject && !newMessage.content) return
+    setSendStatus('sending')
     try {
       const { data: { user } } = await supabase.auth.getUser()
 
@@ -129,34 +189,39 @@ export default function AdminMessagesPage() {
       }
 
       if (newMessage.recipientType === 'individual') {
-        // Direct message to a specific teacher
-        if (!newMessage.teacherUserId) { alert('Please select a teacher'); return }
+        if (!newMessage.teacherUserId) { alert('Please select a teacher'); setSendStatus('idle'); return }
         insertData.recipient_role = 'teacher'
         insertData.recipient_id = newMessage.teacherUserId
       } else {
-        // Broadcast to a role group
-        insertData.recipient_role = newMessage.broadcastRole?.trim() || 'all'
+        // Broadcast to all teachers
+        insertData.recipient_role = 'teacher'
         insertData.recipient_id = null
       }
 
       const { error } = await supabase.from('messages').insert(insertData)
       if (error) throw error
 
-      setNewMessage({ recipientType: 'broadcast', broadcastRole: '', teacherUserId: '', subject: '', content: '', reply_to: null })
-      await loadMessages()
+      setSendStatus('sent')
+      setNewMessage({ recipientType: 'broadcast', teacherUserId: '', subject: '', content: '', reply_to: null })
+      if (adminUserId) await loadMessages(adminUserId)
+
+      // Reset status after 3 seconds
+      setTimeout(() => setSendStatus('idle'), 3000)
     } catch (error: any) {
       console.error('Error sending message:', error)
+      setSendStatus('error')
       alert(error.message || 'Failed to send message')
+      setTimeout(() => setSendStatus('idle'), 3000)
     }
   }
 
   const handleMarkAsRead = async (messageId: string) => {
+    if (!adminUserId) return
     try {
       await supabase
-        .from('messages')
-        .update({ is_read: true, read_at: new Date().toISOString() })
-        .eq('id', messageId)
-      await loadMessages()
+        .from('message_reads')
+        .upsert({ message_id: messageId, user_id: adminUserId }, { onConflict: 'message_id,user_id' })
+      setReadMessageIds(prev => new Set([...prev, messageId]))
     } catch (error) {
       console.error('Error marking as read:', error)
     }
@@ -167,7 +232,7 @@ export default function AdminMessagesPage() {
     try {
       await supabase.from('messages').delete().eq('id', messageId)
       if (selectedMessage?.id === messageId) setSelectedMessage(null)
-      await loadMessages()
+      if (adminUserId) await loadMessages(adminUserId)
     } catch (error: any) {
       console.error('Error deleting message:', error)
       alert(error.message || 'Failed to delete message')
@@ -175,19 +240,33 @@ export default function AdminMessagesPage() {
   }
 
   const handleReply = (message: MessageItem) => {
-    setNewMessage({
-      recipientType: message.recipient_id ? 'individual' : 'broadcast',
-      broadcastRole: message.recipient_id ? '' : (message.recipient_role || 'all'),
-      teacherUserId: message.recipient_id || '',
-      subject: `Re: ${message.subject || ''}`,
-      content: '',
-      reply_to: message.id,
-    })
+    const isFromSomeoneElse = message.sender_id !== adminUserId
+    if (isFromSomeoneElse && message.sender_id) {
+      setNewMessage({
+        recipientType: 'individual',
+        teacherUserId: message.sender_id,
+        subject: `Re: ${message.subject || ''}`,
+        content: '',
+        reply_to: message.id,
+      })
+    } else {
+      setNewMessage({
+        recipientType: message.recipient_id ? 'individual' : 'broadcast',
+        teacherUserId: message.recipient_id || '',
+        subject: `Re: ${message.subject || ''}`,
+        content: '',
+        reply_to: message.id,
+      })
+    }
   }
+
+  const isMessageRead = (msg: MessageItem) => readMessageIds.has(msg.id)
 
   const handleSelectMessage = (message: MessageItem) => {
     setSelectedMessage(message)
-    if (!message.is_read) handleMarkAsRead(message.id)
+    if (!isMessageRead(message) && message.sender_id !== adminUserId) {
+      handleMarkAsRead(message.id)
+    }
   }
 
   const teacherUserMap = Object.fromEntries(teachers.map(t => [t.user_id, t.full_name]))
@@ -195,20 +274,18 @@ export default function AdminMessagesPage() {
   const recipientLabel = (msg: MessageItem) => {
     if (msg.recipient_id) {
       const name = teacherUserMap[msg.recipient_id]
-      return name ? `→ ${name}` : '→ Teacher (direct)'
+      return name ? `${name}` : 'Teacher (direct)'
     }
-    return msg.recipient_role || 'all'
+    return 'All Teachers'
   }
 
-  // Inbox = messages received by admin (not sent by admin)
-  // Sent = messages sent by admin
   const inboxMessages = messages.filter((m: any) => m.sender_id !== adminUserId)
   const sentMessages = messages.filter((m: any) => m.sender_id === adminUserId)
   const displayedMessages = activeTab === 'inbox' ? inboxMessages : sentMessages
-  const unreadCount = inboxMessages.filter(m => !m.is_read).length
+  const unreadCount = inboxMessages.filter(m => !isMessageRead(m)).length
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (
@@ -248,88 +325,119 @@ export default function AdminMessagesPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                {displayedMessages.map((message) => (
-                  <div key={message.id}>
-                    <div
-                      onClick={() => handleSelectMessage(message)}
-                      className={`border rounded-lg p-4 cursor-pointer transition-colors ${
-                        selectedMessage?.id === message.id ? 'border-blue-400 bg-blue-50' : 'hover:bg-gray-50'
-                      } ${!message.is_read ? 'border-l-4 border-l-blue-500' : ''}`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-3 flex-1">
-                          {message.is_read ? (
-                            <MailOpen className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" />
-                          ) : (
-                            <Mail className="w-5 h-5 text-blue-500 mt-0.5 flex-shrink-0" />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <p className={`${!message.is_read ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>
-                              {message.subject || 'No subject'}
-                            </p>
-                            <p className="text-sm text-gray-600 truncate">{message.content}</p>
-                            <div className="flex items-center gap-3 mt-2 flex-wrap">
-                              <span className={`text-xs px-2 py-0.5 rounded-full ${
-                                message.recipient_id
-                                  ? 'bg-green-100 text-green-700'
-                                  : 'bg-gray-100 text-gray-600'
-                              }`}>
-                                {message.recipient_id && <User className="w-3 h-3 inline mr-1" />}
-                                To: {recipientLabel(message)}
-                              </span>
-                              {message.replies && message.replies.length > 0 && (
-                                <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-                                  {message.replies.length} {message.replies.length === 1 ? 'reply' : 'replies'}
+                {displayedMessages.map((message) => {
+                  const read = isMessageRead(message)
+                  return (
+                    <div key={message.id}>
+                      <div
+                        onClick={() => handleSelectMessage(message)}
+                        className={`border rounded-lg p-4 cursor-pointer transition-colors ${
+                          selectedMessage?.id === message.id ? 'border-blue-400 bg-blue-50' : 'hover:bg-gray-50'
+                        } ${!read && activeTab === 'inbox' ? 'border-l-4 border-l-blue-500' : ''}`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start gap-3 flex-1">
+                            {read || activeTab === 'sent' ? (
+                              <MailOpen className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" />
+                            ) : (
+                              <Mail className="w-5 h-5 text-blue-500 mt-0.5 flex-shrink-0" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className={`${!read && activeTab === 'inbox' ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>
+                                {message.subject || 'No subject'}
+                              </p>
+                              <p className="text-sm text-gray-600 truncate">{message.content}</p>
+                              <div className="flex items-center gap-3 mt-2 flex-wrap">
+                                {activeTab === 'inbox' && message.sender_id && (
+                                  <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                                    From: {senderNames[message.sender_id] || 'Unknown'}
+                                  </span>
+                                )}
+                                <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                                  message.recipient_id
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-purple-100 text-purple-700'
+                                }`}>
+                                  {message.recipient_id ? (
+                                    <User className="w-3 h-3" />
+                                  ) : (
+                                    <Users className="w-3 h-3" />
+                                  )}
+                                  To: {recipientLabel(message)}
                                 </span>
-                              )}
+                                {activeTab === 'sent' && (
+                                  <span className="text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                    <CheckCircle className="w-3 h-3" /> Sent
+                                  </span>
+                                )}
+                                {message.replies && message.replies.length > 0 && (
+                                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                                    {message.replies.length} {message.replies.length === 1 ? 'reply' : 'replies'}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-2 ml-4 flex-shrink-0">
-                          <span className="text-xs text-gray-500">{message.date}</span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleReply(message) }}
-                            className="text-blue-500 hover:text-blue-700 p-1"
-                            title="Reply"
-                          >
-                            <Reply className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleDeleteMessage(message.id) }}
-                            className="text-red-500 hover:text-red-700 p-1"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                            <span className="text-xs text-gray-500">{message.date}</span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleReply(message) }}
+                              className="text-blue-500 hover:text-blue-700 p-1"
+                              title="Reply"
+                            >
+                              <Reply className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDeleteMessage(message.id) }}
+                              className="text-red-500 hover:text-red-700 p-1"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    {selectedMessage?.id === message.id && message.replies && message.replies.length > 0 && (
-                      <div className="ml-8 mt-2 space-y-2">
-                        {message.replies.map((reply) => (
-                          <div key={reply.id} className="border rounded-lg p-3 bg-gray-50">
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <p className="font-medium text-sm">{reply.subject || 'No subject'}</p>
-                                <p className="text-sm text-gray-600">{reply.content}</p>
-                              </div>
-                              <div className="flex items-center gap-2 flex-shrink-0">
-                                <span className="text-xs text-gray-500">{reply.date}</span>
+                      {/* Thread view */}
+                      {selectedMessage?.id === message.id && (
+                        <div className="ml-8 mt-2 space-y-2">
+                          {/* Full message content */}
+                          <div className="border rounded-lg p-4 bg-white border-blue-200">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-sm font-medium text-gray-900">
+                                {message.sender_id === adminUserId ? 'You' : (senderNames[message.sender_id || ''] || 'Unknown')}
+                              </span>
+                              <span className="text-xs text-gray-400">{message.date}</span>
+                            </div>
+                            <p className="text-gray-800 whitespace-pre-wrap">{message.content}</p>
+                          </div>
+
+                          {/* Replies */}
+                          {message.replies && message.replies.map((reply) => (
+                            <div key={reply.id} className="border rounded-lg p-3 bg-gray-50">
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <p className="text-xs text-gray-500 mb-1">
+                                    {reply.sender_id === adminUserId ? 'You' : (senderNames[reply.sender_id || ''] || 'Unknown')}
+                                    <span className="ml-2 text-gray-400">{reply.date}</span>
+                                  </p>
+                                  {reply.subject && <p className="font-medium text-sm">{reply.subject}</p>}
+                                  <p className="text-sm text-gray-600 whitespace-pre-wrap">{reply.content}</p>
+                                </div>
                                 <button
                                   onClick={() => handleDeleteMessage(reply.id)}
-                                  className="text-red-500 hover:text-red-700 p-1"
+                                  className="text-red-500 hover:text-red-700 p-1 flex-shrink-0"
                                 >
                                   <Trash2 className="w-3 h-3" />
                                 </button>
                               </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -340,6 +448,20 @@ export default function AdminMessagesPage() {
           <h3 className="text-lg font-semibold mb-4">
             {newMessage.reply_to ? 'Reply to Message' : 'Compose Message'}
           </h3>
+
+          {/* Send status banner */}
+          {sendStatus === 'sent' && (
+            <div className="mb-3 p-2 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-green-600" />
+              <span className="text-sm text-green-700 font-medium">Message sent successfully!</span>
+            </div>
+          )}
+          {sendStatus === 'error' && (
+            <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg">
+              <span className="text-sm text-red-700 font-medium">Failed to send message</span>
+            </div>
+          )}
+
           {newMessage.reply_to && (
             <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
               <span className="text-xs text-blue-700">Replying to a message</span>
@@ -352,8 +474,6 @@ export default function AdminMessagesPage() {
             </div>
           )}
           <div className="space-y-4">
-
-            {/* Recipient type toggle */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Send To</label>
               <div className="flex rounded-lg border border-gray-300 overflow-hidden">
@@ -365,7 +485,7 @@ export default function AdminMessagesPage() {
                       : 'bg-white text-gray-700 hover:bg-gray-50'
                   }`}
                 >
-                  Group / Role
+                  All Teachers
                 </button>
                 <button
                   onClick={() => setNewMessage({ ...newMessage, recipientType: 'individual' })}
@@ -380,8 +500,7 @@ export default function AdminMessagesPage() {
               </div>
             </div>
 
-            {/* Conditional recipient field */}
-            {newMessage.recipientType === 'individual' ? (
+            {newMessage.recipientType === 'individual' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Select Teacher</label>
                 <select
@@ -393,24 +512,6 @@ export default function AdminMessagesPage() {
                   {teachers.map(t => (
                     <option key={t.user_id} value={t.user_id}>{t.full_name}</option>
                   ))}
-                </select>
-                {teachers.length === 0 && (
-                  <p className="text-xs text-gray-500 mt-1">No teachers found.</p>
-                )}
-              </div>
-            ) : (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                <select
-                  value={newMessage.broadcastRole}
-                  onChange={(e) => setNewMessage({ ...newMessage, broadcastRole: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                >
-                  <option value="">All</option>
-                  <option value="admin">Admins</option>
-                  <option value="teacher">All Teachers</option>
-                  <option value="student">Students</option>
-                  <option value="parent">Parents</option>
                 </select>
               </div>
             )}
@@ -437,10 +538,15 @@ export default function AdminMessagesPage() {
             </div>
             <button
               onClick={handleSendMessage}
-              className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+              disabled={sendStatus === 'sending'}
+              className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                sendStatus === 'sending'
+                  ? 'bg-gray-400 text-white cursor-not-allowed'
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
+              }`}
             >
               <Send className="w-5 h-5" />
-              {newMessage.reply_to ? 'Send Reply' : 'Send Message'}
+              {sendStatus === 'sending' ? 'Sending...' : newMessage.reply_to ? 'Send Reply' : 'Send Message'}
             </button>
           </div>
         </div>

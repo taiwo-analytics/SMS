@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Clock } from 'lucide-react'
 import { Timetable } from '@/types/database'
+import SchoolLoader from '@/components/SchoolLoader'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
@@ -261,7 +262,7 @@ export default function TeacherTimetablePage() {
   }, [entries])
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+    return <SchoolLoader />
   }
 
   return (
